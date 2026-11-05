@@ -18,12 +18,24 @@
         "description": "Name or room of the person to call, for the greeting."
       }
     },
-    "required": ["to_number", "question"]
+    "required": [
+      "to_number",
+      "question"
+    ]
   },
   "webhook": {
     "method": "POST",
-    "url": "https://manz-webtest.danlab-dev.workers.dev/api/place-call?k=<ACCESS_KEY>",
-    "headers": { "content-type": "application/json" }
+    "url": "https://manz-webtest.danlab-dev.workers.dev/api/place-call",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "authentication": {
+      "mode": "bearer",
+      "token": {
+        "type": "secret",
+        "secret_value": "<CALLING_WEBHOOK_SECRET - set at deploy time, never committed>"
+      }
+    }
   },
   "execution": {
     "pre_tool_speech": "force",

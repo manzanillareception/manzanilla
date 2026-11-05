@@ -12,7 +12,7 @@ that person and asks exactly that. OpenAI is reserved for the translation path.
 2. It invokes the webhook tool `call_guest` (tools/call_guest.webhook-tool.json) with
    {to_number, question, guest_name}. pre_tool_speech=force so the receptionist hears what is
    about to happen.
-3. Cartesia POSTs to the worker `/api/place-call`, which validates (E.164, question length),
+3. Cartesia POSTs to the worker `/api/place-call` with a bearer secret (`authentication.mode=bearer`, secret stored in the tool config, never the page ACCESS_KEY and never in a URL). The worker fails closed (401) when `CALLING_WEBHOOK_SECRET` is unset, then validates (E.164, question length),
    then calls Cartesia `POST /agents/calls` with `from_number_id` and a dedicated
    outbound-caller agent (`CARTESIA_AGENT_CALLER`), passing the question as a dynamic variable.
 4. The outbound-caller agent (prompts/outbound-caller.md) phones the guest and asks exactly that.
@@ -26,7 +26,7 @@ that person and asks exactly that. OpenAI is reserved for the translation path.
   Spain (+34). International outbound requires a Twilio-imported number or SIP trunk (billed by
   that provider). No account exists yet; vault and memory checked 2026-11-05 - nothing to reuse.
   The one Cartesia number on the account (+13144148291) belongs to the "dani" project and stays
-  untouched. Until a number route is approved, `/api/place-call` returns 503
+  untouched. Provider errors are returned to the LLM as short strings/status codes only - never raw response bodies. Until a number route is approved, `/api/place-call` returns 503
   `calling_not_configured` (env `CARTESIA_FROM_NUMBER_ID`/`CARTESIA_AGENT_CALLER` unset).
 - Outbound calls to guests need the hotel's lawful basis/consent under the destination country's
   rules; Cartesia's AUP makes this the deployer's responsibility. This is a deploy-time
@@ -34,7 +34,7 @@ that person and asks exactly that. OpenAI is reserved for the translation path.
 
 ## Test status
 
-- test-place-call.mjs: 10/10 (validation, payload shape, provider error surfacing, config gate).
+- test-place-call.mjs: 12/12 (validation, payload shape, provider error surfacing, config gate).
 - No live call has been placed. No number provisioned. No telephony spend.
 - Websocket comparative model tests (tool-invocation correctness + latency across candidate
   non-OpenAI LLMs) are the next step; they need TTS-synthesized utterances (Cartesia credits,

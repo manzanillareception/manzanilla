@@ -1379,7 +1379,10 @@ function buildOutboundPayload(env, v) {
   };
 }
 __name(buildOutboundPayload, "buildOutboundPayload");
-async function handlePlaceCall(bodyText, env, fetchImpl) {
+async function handlePlaceCall(bodyText, env, fetchImpl, authHeader) {
+  if (!env.CALLING_WEBHOOK_SECRET || authHeader !== "Bearer " + env.CALLING_WEBHOOK_SECRET) {
+    return { status: 401, out: { error: "unauthorized" } };
+  }
   let parsed = null;
   try { parsed = JSON.parse(bodyText); } catch (e) { return { status: 400, out: { error: "invalid_json" } }; }
   const v = validatePlaceCallInput(parsed);
@@ -1512,8 +1515,7 @@ var index_default = {
       return stub.fetch(new Request("https://do/end-cartesia", { method: "POST", body: await request.text(), headers: { "content-type": "application/json" } }));
     }
     if (p === "/api/place-call" && request.method === "POST") {
-      if (!gate(url, env)) return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { "content-type": "application/json" } });
-      const res = await handlePlaceCall(await request.text(), env, fetch);
+      const res = await handlePlaceCall(await request.text(), env, fetch, request.headers.get("authorization") || "");
       return new Response(JSON.stringify(res.out), { status: res.status, headers: { "content-type": "application/json" } });
     }
     if (p === "/api/session-status") {

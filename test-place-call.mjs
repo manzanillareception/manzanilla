@@ -6,9 +6,10 @@ const { validatePlaceCallInput, buildOutboundPayload, handlePlaceCall } =
   new Function(m[1].replace(/__name\(([^,]+), "[^"]+"\);/g, '') + '; return { validatePlaceCallInput, buildOutboundPayload, handlePlaceCall };')();
 
 let pass = 0, fail = 0;
-function t(name, fn){ Promise.resolve().then(fn).then(()=>{pass++;console.log('PASS',name);}).catch(e=>{fail++;console.log('FAIL',name,'-',e.message);}); }
+async function t(name, fn){ try { await fn(); pass++; console.log('PASS', name); } catch(e){ fail++; console.log('FAIL', name, '-', e.message); } }
 function eq(a,b,w){ if (JSON.stringify(a)!==JSON.stringify(b)) throw new Error(w+': got '+JSON.stringify(a)+' want '+JSON.stringify(b)); }
-const env = { CARTESIA_API_KEY: 'TESTKEY', CARTESIA_FROM_NUMBER_ID: 'ap_TEST', CARTESIA_AGENT_CALLER: 'agent_TEST' };
+const AUTH = 'Bearer test-secret';
+const env = { CARTESIA_API_KEY: 'TESTKEY', CARTESIA_FROM_NUMBER_ID: 'ap_TEST', CARTESIA_AGENT_CALLER: 'agent_TEST', CALLING_WEBHOOK_SECRET: 'test-secret' };
 const okBody = JSON.stringify({ to_number: '+34612345678', question: 'Why are you not coming on time?', guest_name: 'Room 204' });
 
 await t('valid input passes validation, guest trimmed', () => {
@@ -35,30 +36,42 @@ await t('payload carries question verbatim as dynamic variable', () => {
   eq(p.body.from_number_id, 'ap_TEST', 'from id');
   eq(p.headers['Cartesia-Version'], '2026-08-14', 'version default');
 });
-await t('503 calling_not_configured when env missing, no fetch attempted', async () => {
+await t('401 without webhook secret, no fetch attempted', async () => {
   let called = false;
-  const r = await handlePlaceCall(okBody, { CARTESIA_API_KEY: 'K' }, async () => { called = true; });
+  const r = await handlePlaceCall(okBody, env, async () => { called = true; }, '');
+  eq(r.status, 401, 'status');
+  if (called) throw new Error('fetch attempted without auth');
+});
+await t('401 when secret env unset (fail-closed)', async () => {
+  const r = await handlePlaceCall(okBody, { CARTESIA_API_KEY: 'K' }, async () => {}, AUTH);
+  eq(r.status, 401, 'status');
+});
+await t('503 calling_not_configured when numbers env missing, no fetch attempted', async () => {
+  let called = false;
+  const r = await handlePlaceCall(okBody, { CARTESIA_API_KEY: 'K', CALLING_WEBHOOK_SECRET: 'test-secret' }, async () => { called = true; }, AUTH);
   eq(r.status, 503, 'status'); eq(r.out.error, 'calling_not_configured', 'error');
   if (called) throw new Error('fetch attempted without config');
 });
-await t('provider per-call error surfaced, not hidden', async () => {
-  const r = await handlePlaceCall(okBody, env, async () => ({ status: 200, json: async () => ({ calls: [{ number: '+34612345678', error: 'destination_not_allowed' }] }) }));
+await t('provider per-call error surfaced as string only (no raw body)', async () => {
+  const r = await handlePlaceCall(okBody, env, async () => ({ status: 200, json: async () => ({ calls: [{ number: '+34612345678', error: 'destination_not_allowed' }] }) }), AUTH);
   eq(r.status, 200, 'status'); eq(r.out.error, 'destination_not_allowed', 'error');
+  eq(Object.keys(r.out), ['error'], 'only error key');
 });
 await t('success returns agent_call_id', async () => {
-  const r = await handlePlaceCall(okBody, env, async () => ({ status: 200, json: async () => ({ calls: [{ number: '+34612345678', agent_call_id: 'ac_123' }] }) }));
+  const r = await handlePlaceCall(okBody, env, async () => ({ status: 200, json: async () => ({ calls: [{ number: '+34612345678', agent_call_id: 'ac_123' }] }) }), AUTH);
   eq(r.out, { agent_call_id: 'ac_123', to_number: '+34612345678' }, 'out');
 });
-await t('provider non-2xx -> 502 provider_rejected', async () => {
-  const r = await handlePlaceCall(okBody, env, async () => ({ status: 429, json: async () => ({}) }));
-  eq(r.status, 502, 'status'); eq(r.out.provider_status, 429, 'provider_status');
+await t('provider non-2xx -> 502 with status code only (no raw body)', async () => {
+  const r = await handlePlaceCall(okBody, env, async () => ({ status: 429, json: async () => ({ secret: 'should-not-leak' }) }), AUTH);
+  eq(r.status, 502, 'status'); eq(r.out, { error: 'provider_rejected', provider_status: 429 }, 'out redacted');
 });
 await t('network throw -> 502 provider_unreachable', async () => {
-  const r = await handlePlaceCall(okBody, env, async () => { throw new Error('boom'); });
-  eq(r.out.error, 'provider_unreachable', 'error');
+  const r = await handlePlaceCall(okBody, env, async () => { throw new Error('boom'); }, AUTH);
+  eq(r.out, { error: 'provider_unreachable' }, 'out');
 });
 await t('bad json -> 400', async () => {
-  const r = await handlePlaceCall('{not json', env, async () => {});
+  const r = await handlePlaceCall('{not json', env, async () => {}, AUTH);
   eq(r.status, 400, 'status');
 });
-setTimeout(() => { console.log(fail === 0 ? `ALL ${pass} PASS` : `${fail} FAILURES`); process.exit(fail === 0 ? 0 : 1); }, 200);
+console.log(fail === 0 ? `ALL ${pass} PASS` : `${fail} FAILURES`);
+process.exit(fail === 0 ? 0 : 1);
