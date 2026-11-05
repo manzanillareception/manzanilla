@@ -1,0 +1,304 @@
+{
+ "scenario": "tr-es-room",
+ "agent": "agent_TEST_gpt54mini",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1068,
+ "firstAudioMs": 952,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "I’d like a room for tonight, please.Are you still there?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 17,
+  "turn_output_text_delta": 11
+ },
+ "issues": [
+  "reply missing phrase: would like a room | got: i’d like a room for tonight, please.are you still there?"
+ ]
+}
+{
+ "scenario": "tr-es-room",
+ "agent": "agent_TEST_gpt54",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1679,
+ "firstAudioMs": 1565,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Hello, I would like a room for tonight, please.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 16,
+  "turn_output_text_delta": 9
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-room",
+ "agent": "agent_TEST_sonnet5ctrl",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1967,
+ "firstAudioMs": 1850,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Hello, I would like a room for tonight, please.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 3,
+  "audio_output": 15,
+  "turn_output_text_delta": 9
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-breakfast",
+ "agent": "agent_TEST_gpt54mini",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1495,
+ "firstAudioMs": 1377,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "What time is breakfast tomorrow, and is it included in the price?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 2,
+  "turn_ended": 3,
+  "audio_output": 23,
+  "turn_output_text_delta": 12
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-breakfast",
+ "agent": "agent_TEST_gpt54",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1620,
+ "firstAudioMs": 1502,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "What time is breakfast tomorrow, and is it included in the price?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 2,
+  "turn_ended": 3,
+  "audio_output": 22,
+  "turn_output_text_delta": 12
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-breakfast",
+ "agent": "agent_TEST_sonnet5ctrl",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1714,
+ "firstAudioMs": 1597,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "What time is breakfast tomorrow, and is it included in the price?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 2,
+  "turn_ended": 3,
+  "audio_output": 21,
+  "turn_output_text_delta": 12
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-en-room",
+ "agent": "agent_TEST_gpt54mini",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1526,
+ "firstAudioMs": 1415,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Tu habitación está en el segundo piso, y el desayuno se sirve de siete a diez.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 27,
+  "turn_output_text_delta": 16
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-en-room",
+ "agent": "agent_TEST_gpt54",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1794,
+ "firstAudioMs": 1679,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Su habitación está en el segundo piso y el desayuno se sirve de siete a diez.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 29,
+  "turn_output_text_delta": 16
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-en-room",
+ "agent": "agent_TEST_sonnet5ctrl",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1666,
+ "firstAudioMs": 1551,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "La habitación está en el segundo piso, y el desayuno se sirve de siete a diez.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 28,
+  "turn_output_text_delta": 16
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-reservation",
+ "agent": "agent_TEST_gpt54mini",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 969,
+ "firstAudioMs": 855,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "My reservation is under the name García. For two nights, I arrive on December fifteenth.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 31,
+  "turn_output_text_delta": 15
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-reservation",
+ "agent": "agent_TEST_gpt54",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 2046,
+ "firstAudioMs": 1972,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "My reservation is under the name García. For two nights, I arrive on December fifteenth.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 3,
+  "audio_output": 31,
+  "turn_output_text_delta": 15
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-reservation",
+ "agent": "agent_TEST_sonnet5ctrl",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1498,
+ "firstAudioMs": 1382,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "My reservation is under the name García, for two nights, I arrive on December fifteenth.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 28,
+  "turn_output_text_delta": 15
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-thanks",
+ "agent": "agent_TEST_gpt54mini",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1547,
+ "firstAudioMs": 1439,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Thank you.Hello, are you",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 16,
+  "turn_output_text_delta": 5
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-thanks",
+ "agent": "agent_TEST_gpt54",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1263,
+ "firstAudioMs": 1168,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Thanks.Are you still there?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 3,
+  "audio_output": 11,
+  "turn_output_text_delta": 5
+ },
+ "issues": []
+}
+{
+ "scenario": "tr-es-thanks",
+ "agent": "agent_TEST_sonnet5ctrl",
+ "callId": "ac_REDACTED",
+ "firstTextMs": 1124,
+ "firstAudioMs": 1013,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "(silence - no output)Hello?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 21,
+  "turn_output_text_delta": 5
+ },
+ "issues": [
+  "reply missing any of [\"thank\"] | got: (silence - no output)hello?"
+ ]
+}

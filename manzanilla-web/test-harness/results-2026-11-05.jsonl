@@ -1,7 +1,7 @@
 {
  "scenario": "missing-number",
- "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
- "callId": "ac_cTnS5bnhGmnAYNcKC1EBsR",
+ "agent": "agent_TEST_sonnet5",
+ "callId": "ac_REDACTED",
  "firstTextMs": 1255,
  "firstAudioMs": 1143,
  "toolCallMs": null,
@@ -21,8 +21,8 @@
 
 {
  "scenario": "missing-number",
- "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
- "callId": "ac_jxc5MpMhkw4LED1XhggMsh",
+ "agent": "agent_TEST_gemini35",
+ "callId": "ac_REDACTED",
  "firstTextMs": 1066,
  "firstAudioMs": 954,
  "toolCallMs": null,
@@ -42,8 +42,8 @@
 
 {
  "scenario": "missing-question",
- "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
- "callId": "ac_qZYNRcDHMWEhNE8PHNQ7Ct",
+ "agent": "agent_TEST_sonnet5",
+ "callId": "ac_REDACTED",
  "firstTextMs": 1232,
  "firstAudioMs": 1114,
  "toolCallMs": null,
@@ -63,8 +63,8 @@
 
 {
  "scenario": "missing-question",
- "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
- "callId": "ac_8yBEcvnYy6NbYb4PQ8WsBe",
+ "agent": "agent_TEST_gemini35",
+ "callId": "ac_REDACTED",
  "firstTextMs": 686,
  "firstAudioMs": 531,
  "toolCallMs": null,
@@ -84,8 +84,8 @@
 
 {
  "scenario": "tool-error",
- "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
- "callId": "ac_9q7G4nK7fE3wBhF6jKtURN",
+ "agent": "agent_TEST_sonnet5",
+ "callId": "ac_REDACTED",
  "firstTextMs": 1713,
  "firstAudioMs": 1600,
  "toolCallMs": null,
@@ -107,8 +107,8 @@
 
 {
  "scenario": "tool-error",
- "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
- "callId": "ac_cfgNUvbnBza286EoC5Dejv",
+ "agent": "agent_TEST_gemini35",
+ "callId": "ac_REDACTED",
  "firstTextMs": 971,
  "firstAudioMs": 851,
  "toolCallMs": 783,
@@ -138,8 +138,8 @@
 
 {
  "scenario": "clear-number-es",
- "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
- "callId": "ac_QJ21RtQpjWQF76639FAaXN",
+ "agent": "agent_TEST_sonnet5",
+ "callId": "ac_REDACTED",
  "firstTextMs": 1953,
  "firstAudioMs": 1133,
  "toolCallMs": 1947,
@@ -168,8 +168,8 @@
 
 {
  "scenario": "clear-number-es",
- "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
- "callId": "ac_y1sZC3faEw7mMy63vHUnSn",
+ "agent": "agent_TEST_gemini35",
+ "callId": "ac_REDACTED",
  "firstTextMs": 818,
  "firstAudioMs": 741,
  "toolCallMs": 686,
