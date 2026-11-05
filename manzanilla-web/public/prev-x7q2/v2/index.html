@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" data-appearance="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Manzanilla reception</title>
+  <link rel="stylesheet" href="reception.css">
+  <link id="golden-theme" rel="stylesheet" href="golden.css" disabled>
+</head>
+<body>
+  <div class="room-light" aria-hidden="true"></div>
+  <div class="app">
+    <header class="topbar">
+      <div class="wordmark"><img class="brand-icon" id="brand-icon" src="brand-icon.png" alt="" width="44" height="44"><span><span class="brand-name">Manzanilla</span><span class="golden-wordmark" aria-label="Manzanilla"></span><span class="brand-sub" id="mode-title">Reception</span></span></div>
+      <button id="night-toggle" class="night-toggle" aria-pressed="false">Night reception</button>
+      <div id="connection" class="connection" hidden><span class="status-dot"></span><span id="connection-text"></span></div>
+      <button class="icon-button" id="settings" aria-label="Reception settings. Press 9." title="Reception settings · 9"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-.7 2.6-2.5 1L3.5 6 2 8.6l1.9 1.9v3L2 15.4 3.5 18l2.3-.6 2.5 1L9 21h6l.7-2.6 2.5-1 2.3.6 1.5-2.6-1.9-1.9v-3L22 8.6 20.5 6l-2.3.6-2.5-1L15 3Z"/><circle cx="12" cy="12" r="3"/></svg><span class="settings-key" aria-hidden="true">9</span></button>
+      <button class="icon-button" id="exit" aria-label="Return to launcher" title="Return to launcher"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
+    </header>
+    <svg class="floral-corner" viewBox="0 0 240 240" aria-hidden="true"><path d="M236 244C114 229 63 156 78 73c75-11 133 29 145 112l-74-65 87 124ZM235 211C168 110 194 42 257 14c29 70 22 124-13 167l-1-88-8 118ZM214 240C113 257 46 220 24 161c75-26 145 2 174 55l-89-24 105 48Z" fill="currentColor"/></svg>
+    <div class="brand-watermark" aria-hidden="true"></div>
+    <main class="glass-desk" id="desk">
+      <div class="character-stage" id="stage" aria-label="Animated reception bell and receptionist mascot">
+        <canvas id="scene" aria-hidden="true"></canvas>
+        <div class="scene-fallback" id="scene-fallback" hidden>Reception is ready</div>
+        <div class="stage-caption" id="stage-caption">A little help. A warmer welcome.</div>
+      </div>
+      <section class="content" id="content" aria-live="polite"></section>
+    </main>
+    <footer class="footer" hidden><span id="privacy"></span><span id="hotel-label"></span><span id="hardware-hint"></span></footer>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="scene.js" defer></script>
+  <script src="reception.js" defer></script>
+</body>
+</html>
