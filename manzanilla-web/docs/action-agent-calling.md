@@ -25,7 +25,7 @@ that person and asks exactly that. OpenAI is reserved for the translation path.
 - Telephony: Cartesia-provisioned numbers are US-only and outbound-US-only. Pilot guests are in
   Spain (+34). International outbound requires a Twilio-imported number or SIP trunk (billed by
   that provider). No account exists yet; vault and memory checked 2026-11-05 - nothing to reuse.
-  The one Cartesia number on the account (+13144148291) belongs to the "dani" project and stays
+  The one Cartesia number on the account (US number, redacted) belongs to the "dani" project and stays
   untouched. Provider errors are returned to the LLM as short strings/status codes only - never raw response bodies. Until a number route is approved, `/api/place-call` returns 503
   `calling_not_configured` (env `CARTESIA_FROM_NUMBER_ID`/`CARTESIA_AGENT_CALLER` unset).
 - Outbound calls to guests need the hotel's lawful basis/consent under the destination country's
