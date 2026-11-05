@@ -1,0 +1,197 @@
+{
+ "scenario": "missing-number",
+ "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
+ "callId": "ac_cTnS5bnhGmnAYNcKC1EBsR",
+ "firstTextMs": 1255,
+ "firstAudioMs": 1143,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "I can do that. Could you give me the guest's phone number to call?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 21,
+  "turn_output_text_delta": 14
+ },
+ "issues": []
+}
+
+{
+ "scenario": "missing-number",
+ "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
+ "callId": "ac_jxc5MpMhkw4LED1XhggMsh",
+ "firstTextMs": 1066,
+ "firstAudioMs": 954,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Could you tell me the guest's name or phone number?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 20,
+  "turn_output_text_delta": 10
+ },
+ "issues": []
+}
+
+{
+ "scenario": "missing-question",
+ "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
+ "callId": "ac_qZYNRcDHMWEhNE8PHNQ7Ct",
+ "firstTextMs": 1232,
+ "firstAudioMs": 1114,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "I'll need to know what you'd like me to ask them before I can place the call. What should I say?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 31,
+  "turn_output_text_delta": 21
+ },
+ "issues": []
+}
+
+{
+ "scenario": "missing-question",
+ "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
+ "callId": "ac_8yBEcvnYy6NbYb4PQ8WsBe",
+ "firstTextMs": 686,
+ "firstAudioMs": 531,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "Could you tell me what you would like me to ask them?Are you still there?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 2,
+  "audio_output": 19,
+  "turn_output_text_delta": 16
+ },
+ "issues": []
+}
+
+{
+ "scenario": "tool-error",
+ "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
+ "callId": "ac_9q7G4nK7fE3wBhF6jKtURN",
+ "firstTextMs": 1713,
+ "firstAudioMs": 1600,
+ "toolCallMs": null,
+ "toolCalls": [],
+ "text": "I need the full phone number — you gave me 3 4 6 1 2 3 4 5 6 7 8, which has a stray digit. Can you confirm the exact number?",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 2,
+  "audio_output_clear": 1,
+  "turn_ended": 1,
+  "audio_output": 59,
+  "turn_output_text_delta": 32
+ },
+ "issues": [
+  "tool NOT invoked"
+ ]
+}
+
+{
+ "scenario": "tool-error",
+ "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
+ "callId": "ac_cfgNUvbnBza286EoC5Dejv",
+ "firstTextMs": 971,
+ "firstAudioMs": 851,
+ "toolCallMs": 783,
+ "toolCalls": [
+  {
+   "name": "call_guest",
+   "parameters": {
+    "to_number": "+34612345678",
+    "guest_name": "guest",
+    "question": "Why are you not coming on time?"
+   }
+  }
+ ],
+ "text": "I'm calling the guest now to ask why they're delayed.The call could not be placed because calling is not configured.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 4,
+  "client_tool_call": 1,
+  "audio_output": 34,
+  "turn_output_text_delta": 21
+ },
+ "issues": []
+}
+
+{
+ "scenario": "clear-number-es",
+ "agent": "agent_YAySLtDfeZp6YK4a9d3nHV",
+ "callId": "ac_QJ21RtQpjWQF76639FAaXN",
+ "firstTextMs": 1953,
+ "firstAudioMs": 1133,
+ "toolCallMs": 1947,
+ "toolCalls": [
+  {
+   "name": "call_guest",
+   "parameters": {
+    "to_number": "+34612345678",
+    "question": "¿Por qué no llegan a tiempo?"
+   }
+  }
+ ],
+ "text": "Voy a llamar a ese número y preguntar por qué no llegan a tiempo.Llamando ahora, preguntando por qué no llegan a tiempo.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 4,
+  "audio_output": 45,
+  "client_tool_call": 1,
+  "turn_output_text_delta": 23
+ },
+ "issues": []
+}
+
+{
+ "scenario": "clear-number-es",
+ "agent": "agent_LN7vsRykBNHtwQBZDkJzSH",
+ "callId": "ac_y1sZC3faEw7mMy63vHUnSn",
+ "firstTextMs": 818,
+ "firstAudioMs": 741,
+ "toolCallMs": 686,
+ "toolCalls": [
+  {
+   "name": "call_guest",
+   "parameters": {
+    "to_number": "+34612345678",
+    "question": "¿Por qué no llegan a tiempo?"
+   }
+  }
+ ],
+ "text": "Calling them now to ask why they are late.I've placed the call for you.",
+ "error": null,
+ "eventCounts": {
+  "session_ready": 1,
+  "turn_started": 3,
+  "audio_output_clear": 1,
+  "turn_ended": 4,
+  "client_tool_call": 1,
+  "audio_output": 21,
+  "turn_output_text_delta": 15
+ },
+ "issues": []
+}
