@@ -1,0 +1,30 @@
+name = "manz-webtest"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+workers_dev = true
+
+[vars]
+TEST_MODE = "False"
+MINT_HELD = "True"
+CARTESIA_HELD = "False"
+CARTESIA_AGENT_TRANSLATE = "agent_TH6FHndxemGwqtH4aZYMEk"
+CARTESIA_AGENT_NIGHT = "agent_gKPCioSa99LcdABjCEKLX7"
+CARTESIA_VERSION = "2026-08-14"
+FISH_AGENT_TRANSLATE = "eae49a2dcdb3441e8d08038e06aad269"
+FISH_AGENT_NIGHT = "6109570702564ec1a314a93612283a96"
+PIPELINE_TRANSLATE = "managed"
+
+[durable_objects]
+bindings = [{ name = "BUDGET", class_name = "BudgetDO" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BudgetDO"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+[observability.logs]
+enabled = true
