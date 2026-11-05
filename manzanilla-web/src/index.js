@@ -1337,6 +1337,74 @@ async function handleMock(request, env, url) {
   return new Response(null, { status: 101, webSocket: client });
 }
 __name(handleMock, "handleMock");
+
+/*PLACECALL-BEGIN*/
+// Action-agent outbound calling (Cartesia POST /agents/calls).
+// PLACEMENT RULE: no call is placed unless from_number_id + caller agent id are configured
+// in the worker environment; validation failures and provider errors are returned verbatim.
+// Compliance: outbound calls to guests require the hotel's own lawful basis/consent; this
+// endpoint only transports a request the on-site agent already decided to make.
+function validatePlaceCallInput(body) {
+  if (!body || typeof body !== "object") return { ok: false, error: "invalid_json" };
+  const to = typeof body.to_number === "string" ? body.to_number.trim() : "";
+  if (!/^\+[1-9]\d{7,14}$/.test(to)) return { ok: false, error: "bad_to_number_e164" };
+  const q = typeof body.question === "string" ? body.question.trim() : "";
+  if (q.length < 1 || q.length > 500) return { ok: false, error: "bad_question_length" };
+  const guest = typeof body.guest_name === "string" ? body.guest_name.trim().slice(0, 100) : "";
+  return { ok: true, to_number: to, question: q, guest_name: guest };
+}
+__name(validatePlaceCallInput, "validatePlaceCallInput");
+function buildOutboundPayload(env, v) {
+  return {
+    url: "https://api.cartesia.ai/agents/calls",
+    headers: {
+      "X-API-Key": env.CARTESIA_API_KEY,
+      "Cartesia-Version": env.CARTESIA_VERSION || "2026-08-14",
+      "Content-Type": "application/json"
+    },
+    body: {
+      from_number_id: env.CARTESIA_FROM_NUMBER_ID,
+      agent_id: env.CARTESIA_AGENT_CALLER,
+      ringing_timeout_seconds: 45,
+      outbound_calls: [
+        {
+          to_number: v.to_number,
+          dynamic_variables: {
+            question: v.question,
+            guest_name: v.guest_name || "the guest"
+          }
+        }
+      ]
+    }
+  };
+}
+__name(buildOutboundPayload, "buildOutboundPayload");
+async function handlePlaceCall(bodyText, env, fetchImpl) {
+  let parsed = null;
+  try { parsed = JSON.parse(bodyText); } catch (e) { return { status: 400, out: { error: "invalid_json" } }; }
+  const v = validatePlaceCallInput(parsed);
+  if (!v.ok) return { status: 400, out: { error: v.error } };
+  if (!env.CARTESIA_FROM_NUMBER_ID || !env.CARTESIA_AGENT_CALLER) {
+    return { status: 503, out: { error: "calling_not_configured" } };
+  }
+  const p = buildOutboundPayload(env, v);
+  let r = null;
+  try {
+    r = await fetchImpl(p.url, { method: "POST", headers: p.headers, body: JSON.stringify(p.body), signal: AbortSignal.timeout(8e3) });
+  } catch (e) {
+    return { status: 502, out: { error: "provider_unreachable" } };
+  }
+  let data = null;
+  try { data = await r.json(); } catch (e) { data = null; }
+  if (r.status < 200 || r.status >= 300) return { status: 502, out: { error: "provider_rejected", provider_status: r.status } };
+  const c = data && data.calls && data.calls[0];
+  if (!c) return { status: 502, out: { error: "provider_bad_response" } };
+  if (c.error) return { status: 200, out: { error: String(c.error) } };
+  return { status: 200, out: { agent_call_id: c.agent_call_id, to_number: v.to_number } };
+}
+__name(handlePlaceCall, "handlePlaceCall");
+/*PLACECALL-END*/
+
 function gate(url, env) {
   return url.searchParams.get("k") === env.ACCESS_KEY;
 }
@@ -1442,6 +1510,11 @@ var index_default = {
       if (!gate(url, env)) return new Response("{}", { status: 403, headers: { "content-type": "application/json" } });
       const stub = env.BUDGET.get(env.BUDGET.idFromName("global"));
       return stub.fetch(new Request("https://do/end-cartesia", { method: "POST", body: await request.text(), headers: { "content-type": "application/json" } }));
+    }
+    if (p === "/api/place-call" && request.method === "POST") {
+      if (!gate(url, env)) return new Response(JSON.stringify({ error: "forbidden" }), { status: 403, headers: { "content-type": "application/json" } });
+      const res = await handlePlaceCall(await request.text(), env, fetch);
+      return new Response(JSON.stringify(res.out), { status: res.status, headers: { "content-type": "application/json" } });
     }
     if (p === "/api/session-status") {
       if (!gate(url, env)) return new Response("{}", { status: 403, headers: { "content-type": "application/json" } });

@@ -1,0 +1,33 @@
+{
+  "kind": "webhook",
+  "name": "call_guest",
+  "description": "Place a phone call to a guest or contact the receptionist explicitly asks to call, and ask them the exact question the receptionist stated. Use it only when the receptionist names or numbers a specific person to call AND states what to ask or tell them. Never call anyone on your own initiative.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "to_number": {
+        "type": "string",
+        "description": "Destination phone number in E.164 format, e.g. +34612345678. Take it from the receptionist's instruction or the hotel directory lookup; never invent a number."
+      },
+      "question": {
+        "type": "string",
+        "description": "The exact question or message to deliver, in the receptionist's own words, translated into the guest's language if known. Do not add questions."
+      },
+      "guest_name": {
+        "type": "string",
+        "description": "Name or room of the person to call, for the greeting."
+      }
+    },
+    "required": ["to_number", "question"]
+  },
+  "webhook": {
+    "method": "POST",
+    "url": "https://manz-webtest.danlab-dev.workers.dev/api/place-call?k=<ACCESS_KEY>",
+    "headers": { "content-type": "application/json" }
+  },
+  "execution": {
+    "pre_tool_speech": "force",
+    "execution_mode": "immediate",
+    "response_timeout_secs": 20
+  }
+}
