@@ -31,7 +31,7 @@ Timing logs contain endpoint names, sequences and monotonic timestamps, not gues
 
 ## Signing and publication
 
-Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. At the owner's request, the signed release job injects `FISH_API_KEY` for direct testing. Never commit credentials. The published APK is public and its embedded Fish key is extractable; use a disposable key with appropriate account limits and rotate it after testing.
+Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. No build embeds a Fish credential: `BuildConfig.FISH_API_KEY` is always empty in every build, including CI artifacts, and the release job no longer receives `FISH_API_KEY`. Fish access comes from a device-entered key (encrypted `SecretStore`) or an enrolled hotel service. Never commit credentials and never inject a production key into any distributed build. Public releases v17.0.37 through v17.0.39 embedded the production Fish key (extractable from those APKs); rotate that key.
 
 `android/VERSION` and `android/VERSION_CODE` advance explicitly. Publication must preserve `dev.orange.hotel` and the existing signer, supersede the previous public APK and reproduce `release-metadata.json` from the exact artifact. Android may require system confirmation for file-installed apps.
 
