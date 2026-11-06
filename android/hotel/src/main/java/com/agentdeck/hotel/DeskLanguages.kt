@@ -1,6 +1,6 @@
 package com.agentdeck.hotel
 
-/** Fish Agents speaking languages, Spain hotel order. Codes match docs.fish.audio agents voice-language. */
+/** Configured display languages in Spain hotel order; provider support is verified separately. */
 object DeskLanguages {
     val codes: List<String> = listOf(
         "es", "en", "ca", "fr", "de", "it", "pt", "nl", "ar", "zh",

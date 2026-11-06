@@ -22,8 +22,8 @@ class ReceptionAssetsTest {
         fun allows(path: String, host: String = ReceptionAssets.HOST, scheme: String = "https",
                    query: String? = null, method: String = "GET") =
             ReceptionAssets.allows(scheme, host, path, query, method)
-        assertFalse(allows("/fish-caption-tool.json"))
-        assertFalse(allows("/../fish-caption-tool.json"))
+        assertFalse(allows("/private-provider-config.json"))
+        assertFalse(allows("/../private-provider-config.json"))
         assertFalse(allows("/language-turns.js", host = "example.com"))
         assertFalse(allows("/language-turns.js", scheme = "http"))
         assertFalse(allows("/language-turns.js", query = "v=1"))

@@ -176,15 +176,15 @@ class CredentialStorageTest {
 
     @Test fun clearRemovesOnlyTheSelectedCredentialAndNewSaveIsReadableAfterRestart() {
         val aes = Aes()
-        val fish = CredentialStorage(target("fish.enc"), Legacy(), aes)
+        val voice = CredentialStorage(target("voice.enc"), Legacy(), aes)
         val gemFile = target("gem.enc")
         val gemLegacy = Legacy()
         val gem = CredentialStorage(gemFile, gemLegacy, aes)
-        assertTrue(fish.save("fish-fixture-key"))
+        assertTrue(voice.save("voice-fixture-key"))
         assertTrue(gem.save("gem-fixture-key"))
-        fish.clear()
-        assertNull(fish.load())
-        assertEquals(CredentialStorage.Status.ABSENT, fish.status)
+        voice.clear()
+        assertNull(voice.load())
+        assertEquals(CredentialStorage.Status.ABSENT, voice.status)
         assertEquals("gem-fixture-key", CredentialStorage(gemFile, gemLegacy, aes).load())
     }
 }

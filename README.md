@@ -2,7 +2,9 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with an open-canvas reception home, day/night appearance and hands-free live translation. Reception and guest languages have independent selectors. The 17.0.30 release requires an enrolled hotel backend or a staff-saved device credential for translation; it does not embed a shared Fish key. Earlier pilot APKs did embed an extractable credential, which its owner must rotate.
+Manzanilla Reception is a landscape Android app with hotel assistance and an in-app updater. The 17.0.42 source candidate removes the retired speech provider from Android, backend sessions, web relay, worker tooling and CI. Live translation is unavailable in this legacy app until the OpenAI integration is delivered; starting it shows an explicit error without opening a microphone or contacting a provider. The recovered v27 OpenAI launcher is a separate application (`com.agentdeck`), not this repository's `dev.orange.hotel` app. Existing Cartesia V2 backend work remains separate.
+
+**Source candidate, not a published APK:** the download links below point to the last published release and do not include this removal until a new signed release is published. [Removal scope and validation](docs/provider-removal-17.0.42.md).
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -109,7 +111,9 @@ unmeasured. Backend/worker deployment is separate from APK publication.
 
 The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-README.md).
 
-## Status
+## Historical status
+
+The entries below describe earlier source candidates and releases. Their provider setup and voice behavior no longer apply to the 17.0.42 source candidate.
 
 **17.0.27 translation/reception candidate (unreleased):** translation text is
 requested before caption generation, Android audio diagnostics run off the media

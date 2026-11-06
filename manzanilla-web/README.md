@@ -23,3 +23,11 @@ The full source of the Manzanilla managed-web test worker (Cloudflare worker: cl
 ## What was NOT done
 - No fix for the wrong-language transcription itself (provider-side question pending).
 - No deployment, no release, no changes to the live site.
+
+## Retired session route
+
+The legacy `/api/session` and `/api/session/end` endpoints return HTTP 410 after
+access validation. They do not read cached tokens, change stored budgets, or
+contact an upstream provider. The corresponding internal mint/state/reset paths
+are also retired. The existing Cartesia pilot and separate `src/v2` backend are
+unchanged by this removal. No deployed service was modified.

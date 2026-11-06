@@ -9,16 +9,6 @@ android {
     // Private same-signer instrumentation is used only for disposable release-upgrade tests.
     testBuildType = if (project.hasProperty("upgradeFixture")) "release" else "debug"
     defaultConfig {
-        fun injected(name: String): String {
-            val env = System.getenv(name)
-            if (!env.isNullOrBlank()) return env
-            val prop = project.findProperty(name) as String?
-            if (!prop.isNullOrBlank()) return prop
-            val file = rootProject.file("local.properties")
-            if (!file.exists()) return ""
-            return file.readLines().firstOrNull { it.substringBefore("#").trim().startsWith("$name=") }
-                ?.substringAfter("=")?.trim().orEmpty()
-        }
         applicationId = "dev.orange.hotel"
         minSdk = 26
         targetSdk = 34
@@ -30,10 +20,6 @@ android {
         }
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/release-metadata.json"))
         buildConfigField("String", "LEGACY_FEED_URL", javaString(project.findProperty("legacyFeedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
-        // Never embed a Fish credential in any build, including CI artifacts.
-        // Provider access comes from a device-entered key (SecretStore) or an enrolled hotel service.
-        buildConfigField("String", "FISH_API_KEY", javaString(""))
-        buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl") || project.hasProperty("legacyFeedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
@@ -61,8 +47,6 @@ android {
 }
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("io.livekit:livekit-android:2.29.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("com.android.tools.build:apksig:8.2.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
