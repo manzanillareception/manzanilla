@@ -14,8 +14,8 @@ Existing database tables and unrelated encrypted settings are not erased. A new 
 - Node suites: **21 passed**, including retired web-route and retained Cartesia behavior checks.
 - Reception asset generation/check, release-policy credential/package guard, JavaScript syntax, shell syntax and `git diff --check`: passed.
 - Live Cartesia V2 source/config has no diff.
-- Android release/unit/lint/instrumentation compilation was attempted locally; build verification remains pending because Gradle could not download its distribution in the current runtime. No signed APK was produced.
-- Browser checks were attempted with Chromium 151. The runtime rejects its process socket with `Operation not permitted`, so browser scenarios did not execute here. GitHub's existing Android/browser jobs remain required.
+- Local Android checks passed: `:hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleRelease :hotel:assembleDebugAndroidTest`. The release APK is unsigned; no signed release was produced. Initial environment proxy/JDK-launcher issues were resolved without source substitutions.
+- Browser checks were attempted with Chromium 151. This runtime rejects its process socket with `Operation not permitted`, so browser scenarios did not execute locally. The unchanged browser runner passed in [GitHub CI](https://github.com/somdipto/manzanilla/actions/runs/42314415666). Android emulator checks remain separately tracked in that run.
 - No physical-device tests, production data changes or provider calls were performed.
 
 The only production references to the retired provider name are the explicit one-time deletion of its old encrypted credential/preference identifiers in `RetiredCredentials.kt`. A corrupt old value can be erased without loading or decrypting it. Its isolated instrumentation fixture verifies retention of hotel credentials and the shared Keystore alias. Historical provider names in regression fixtures and documents are intentionally retained.
