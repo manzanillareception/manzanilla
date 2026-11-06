@@ -5,6 +5,10 @@
 
 const STATUSES = new Set(['pending', 'approved', 'revoked']);
 const AUDIT_CAP = 500;
+// An unreleased lease older than this cannot belong to a live call (the worker
+// kills every call at 15 minutes), so it is stale isolate-loss residue, not a
+// reason to lock the user out forever.
+const LEASE_TTL_MS = 16 * 60 * 1000;
 
 export class UsersDO {
   constructor(state) {
@@ -66,7 +70,11 @@ export class UsersDO {
     if (u.status !== 'approved') return json(403, { error: 'not_approved', status: u.status });
     const now = Date.now();
     if (u.day !== dayKey(now)) { u.day = dayKey(now); u.sessions_today = 0; }
-    if (u.active_session) return json(429, { error: 'active_session' });
+    if (u.active_session) {
+      const fresh = now - (u.active_session.at || 0) <= LEASE_TTL_MS;
+      if (fresh) return json(429, { error: 'active_session' });
+      await this.log({ sub, event: 'session_recovered', stale_session_id: u.active_session.session_id || '', at: now });
+    }
     if (u.sessions_today >= daily_cap) return json(429, { error: 'daily_cap' });
     u.sessions_today += 1;
     u.active_session = { session_id, at: now };

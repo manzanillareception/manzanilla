@@ -47,6 +47,8 @@ export function makeEnv() {
   const doState = { storage: new MemoryStorage() };
   const instance = new UsersDO(doState);
   return {
+    // test-only handle to pre-seed DO state (e.g. aging a session lease)
+    __doStorage: doState.storage,
     GOOGLE_CLIENT_IDS: 'web-client-id,android-client-id',
     ADMIN_EMAILS: 'admin@example.com',
     SESSION_SECRET: 'test-session-secret-test-session-secret-0123456789',

@@ -56,6 +56,18 @@ function audiences(env) {
 function adminEmails(env) {
   return String(env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 }
+// Verifiers are expensive to construct and hold the in-memory JWKS cache, so
+// keep one per isolate keyed on the config that shapes it. Rebuilding one per
+// request would refetch Google's JWKS document on every auth/admin call.
+let verifierCache = null;
+function googleVerifier(env) {
+  const key = JSON.stringify([audiences(env), env.V2_JWKS_URI || '']);
+  if (!verifierCache || verifierCache.key !== key) {
+    verifierCache = { key, verifier: createGoogleVerifier({ audiences: audiences(env), jwksUri: env.V2_JWKS_URI || undefined }) };
+  }
+  return verifierCache.verifier;
+}
+
 function usersStub(env) {
   return env.USERS.get(env.USERS.idFromName('users'));
 }
@@ -69,8 +81,8 @@ async function usersCall(env, path, body) {
 async function onAuth(req, env) {
   if (req.method !== 'POST') return json(405, { error: 'method' });
   const { credential } = await req.json().catch(() => ({}));
-  const verify = createGoogleVerifier({ audiences: audiences(env), jwksUri: env.V2_JWKS_URI || undefined });
-  const id = await verify(credential);
+  const id = await googleVerifier(env)(credential);
+  if (!id.emailVerified) throw new AuthError('email_unverified');
   const isAdmin = adminEmails(env).includes(id.email);
   await usersCall(env, '/touch', id);
   if (isAdmin) await usersCall(env, '/approve', { sub: id.sub, by: 'admin-allowlist' }).catch(() => null);
@@ -84,8 +96,8 @@ async function onAuth(req, env) {
 
 async function requireAdmin(req, env) {
   const { credential } = await req.json().catch(() => ({}));
-  const verify = createGoogleVerifier({ audiences: audiences(env), jwksUri: env.V2_JWKS_URI || undefined });
-  const id = await verify(credential);
+  const id = await googleVerifier(env)(credential);
+  if (!id.emailVerified) throw new AuthError('email_unverified');
   if (!adminEmails(env).includes(id.email)) throw new AuthError('not_admin');
   return id;
 }
