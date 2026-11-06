@@ -55,7 +55,6 @@ jobs:
           printf '%s/build-tools/34.0.0\n' "$ANDROID_HOME" >> "$GITHUB_PATH"
       - name: Build with existing pilot signing key
         env:
-          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
           ORANGE_KEYSTORE_BASE64: ${{ secrets.ORANGE_KEYSTORE_BASE64 }}
           ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
           ORANGE_KEY_ALIAS: ${{ secrets.ORANGE_KEY_ALIAS }}
@@ -64,7 +63,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$FISH_API_KEY"
           test -n "$ORANGE_KEYSTORE_BASE64"
           export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-pilot.jks"
           printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
