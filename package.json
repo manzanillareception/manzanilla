@@ -6,8 +6,6 @@
     "check:reception": "node scripts/build-reception.cjs --check"
   },
   "devDependencies": {
-    "esbuild": "0.25.12",
-    "miniflare": "^4.20260730.0",
-    "ws": "^8.22.1"
+    "esbuild": "0.25.12"
   }
 }

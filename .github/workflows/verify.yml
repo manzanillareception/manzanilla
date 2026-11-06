@@ -29,7 +29,6 @@ jobs:
       - run: npm ci
       - run: npm run check:reception
       - run: node --test tests/*.test.cjs
-      - run: node --test tests/v2/*.test.mjs
       - run: pip install -r requirements-dev.txt
       - run: pip install -r voice-worker/requirements.txt
       - run: python -m pytest tests -q

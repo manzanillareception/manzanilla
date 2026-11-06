@@ -1,0 +1,16 @@
+name: Verify V2 backend
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm --prefix tests/v2 ci
+      - run: node --test tests/v2/*.test.mjs
