@@ -84,3 +84,11 @@ test('unknown routes 404', async () => {
   const r = await worker.fetch(new Request('https://v2.example.com/v2/nope'), env, { waitUntil: () => {} });
   assert.equal(r.status, 404);
 });
+
+test('a Google token with email_verified false gets no sign-in and no admin', async () => {
+  const unverifiedAdmin = await googleToken({ sub: 'admin-lookalike', email: 'admin@example.com', email_verified: false });
+  assert.equal((await post('/v2/auth', { credential: unverifiedAdmin })).status, 401);
+  assert.equal((await post('/v2/admin/list', { credential: unverifiedAdmin })).status, 401);
+  const unverifiedUser = await googleToken({ sub: 'user-unv', email: 'unv@example.com', email_verified: false });
+  assert.equal((await post('/v2/auth', { credential: unverifiedUser })).status, 401);
+});
