@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -30,7 +31,9 @@ internal object VoiceSetupFixture {
             }
             test.waitForIdleSync()
             check(activity.isFinishing || activity.isDestroyed)
-            println("VOICE_SETUP deviceSecure=$secure")
+            test.sendStatus(0, Bundle().apply {
+                putString("stream", "VOICE_SETUP deviceSecure=$secure\n")
+            })
         } finally {
             test.runOnMainSync { activity.finish() }
         }
