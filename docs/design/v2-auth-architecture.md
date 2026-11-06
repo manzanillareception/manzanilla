@@ -48,19 +48,31 @@ security is treated as something to test, and that is what the test suite does.
 
 ## Security properties and honest limits
 
-- Tested (tests/v2, 23 cases, run in CI): forged/expired/wrong-audience/
-  wrong-issuer tokens, tampered payloads, unknown signing keys, tampered and
-  expired session tokens, wrong-secret sessions, non-admin admin calls,
-  pending and revoked denial, revocation clearing an active lease, one-active
-  session and daily-cap enforcement.
-- Session tokens expire in 15 minutes; revocation takes effect on the next
-  session open (an in-flight relay is not killed mid-call yet - recorded as
-  follow-up, since mid-call kill needs a status poll inside the bridge).
+- Tested (tests/v2, 29 cases, run in CI):
+  - Unit: forged/expired/wrong-audience/wrong-issuer tokens, tampered
+    payloads, unknown signing keys, tampered and expired session tokens,
+    wrong-secret sessions, non-admin admin calls, pending and revoked denial,
+    revocation clearing an active lease, one-active session and daily-cap
+    enforcement.
+  - Real boundary (worker in the actual Workers runtime via miniflare, real
+    WebSocket client, local fake upstream): approved user bridges and the
+    provider key appears only on the upstream handshake; MID-CALL REVOCATION
+    KILLS AN IN-FLIGHT RELAY (close 4403 within one 10s poll interval);
+    revoked-before-connect, forged session, missing auth timeout and
+    one-active-session are all rejected at the socket boundary.
+- Session tokens expire in 15 minutes; revocation also takes effect mid-call
+  within one status-poll interval (10s), verified by the boundary test. A
+  15-minute max-call backstop closes any leaked session.
+- Test-only seams (never set in production): V2_JWKS_URI, V2_AUTH_TIMEOUT_MS,
+  CARTESIA_UPSTREAM_WS_BASE.
 - Not covered by this design: compromise of a user's Google account itself,
   device compromise, phishing. These are outside any app-level design.
 - The relay bridge pattern mirrors the existing proven pilot proxy; the
   live-call audio path still needs a real deployment test before anyone calls
   mobile Cartesia "working".
+- Precise scope of "key-free": the NEW V2 backend code ships no shared
+  provider key to any client. This says nothing about the current mobile APK,
+  whose source (v27 ZIP) and artifacts are unavailable for verification.
 
 ## Open inputs (owner)
 

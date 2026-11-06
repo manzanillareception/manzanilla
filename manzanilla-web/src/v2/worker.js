@@ -23,7 +23,9 @@ import { AuthError, createGoogleVerifier, createSessionTokens } from './auth.js'
 import { UsersDO } from './users.js';
 export { UsersDO };
 
-const AUTH_TIMEOUT_MS = 10000;
+const DEFAULT_AUTH_TIMEOUT_MS = 10000;
+const STATUS_POLL_MS = 10000;
+const MAX_CALL_MS = 15 * 60 * 1000;
 
 export default {
   async fetch(req, env, ctx) {
@@ -67,7 +69,7 @@ async function usersCall(env, path, body) {
 async function onAuth(req, env) {
   if (req.method !== 'POST') return json(405, { error: 'method' });
   const { credential } = await req.json().catch(() => ({}));
-  const verify = createGoogleVerifier({ audiences: audiences(env) });
+  const verify = createGoogleVerifier({ audiences: audiences(env), jwksUri: env.V2_JWKS_URI || undefined });
   const id = await verify(credential);
   const isAdmin = adminEmails(env).includes(id.email);
   await usersCall(env, '/touch', id);
@@ -82,7 +84,7 @@ async function onAuth(req, env) {
 
 async function requireAdmin(req, env) {
   const { credential } = await req.json().catch(() => ({}));
-  const verify = createGoogleVerifier({ audiences: audiences(env) });
+  const verify = createGoogleVerifier({ audiences: audiences(env), jwksUri: env.V2_JWKS_URI || undefined });
   const id = await verify(credential);
   if (!adminEmails(env).includes(id.email)) throw new AuthError('not_admin');
   return id;
@@ -107,68 +109,96 @@ async function onAdmin(req, env, action) {
   return json(404, { error: 'unknown_route' });
 }
 
-// WSS relay: client connects, sends {type:'auth',token} as the FIRST message;
-// we verify the session, require an approved user, acquire the one-active
-// session lease, then bridge to the Cartesia night agent upstream. The
-// provider key is added only on the upstream handshake. No token in the URL.
+// WSS relay: the 101 response is returned immediately; auth happens on the
+// first message. Client sends {type:'auth',token}; we verify the session,
+// require an approved user, acquire the one-active lease, then bridge to the
+// Cartesia night agent upstream. The provider key is added only on the
+// upstream handshake. No token in the URL. Frames arriving before
+// session_ready are dropped; clients wait for session_ready by contract.
 async function onRelay(req, env, ctx) {
   if (req.headers.get('Upgrade') !== 'websocket') return json(426, { error: 'upgrade_required' });
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
   server.accept();
 
-  const fail = (reason) => { try { server.send(JSON.stringify({ type: 'error', error: reason })); } catch {} try { server.close(4401, reason); } catch {} };
-
-  const authed = await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), AUTH_TIMEOUT_MS);
-    const onMsg = (ev) => {
-      clearTimeout(timer);
-      server.removeEventListener('message', onMsg);
-      try {
-        const m = JSON.parse(ev.data);
-        resolve(m && m.type === 'auth' && typeof m.token === 'string' ? m.token : null);
-      } catch { resolve(null); }
-    };
-    server.addEventListener('message', onMsg);
-  });
-  if (!authed) return fail('auth_required'), new Response(null, { status: 101, webSocket: client });
-
-  let session;
-  try {
-    session = await createSessionTokens({ secret: env.SESSION_SECRET }).verify(authed);
-  } catch (e) { fail(e instanceof AuthError ? e.message : 'bad_session'); return new Response(null, { status: 101, webSocket: client }); }
-
-  const sessionId = crypto.randomUUID();
-  const cap = parseInt(env.V2_DAILY_SESSION_CAP || '10', 10);
-  const acq = await usersCall(env, '/acquire', { sub: session.sub, session_id: sessionId, daily_cap: cap });
-  if (!acq.ok) { fail(acq.error || 'not_allowed'); return new Response(null, { status: 101, webSocket: client }); }
-
-  const agentId = env.CARTESIA_AGENT_NIGHT;
-  const upstreamUrl = 'wss://api.cartesia.ai/v1/agents/websocket/' + agentId + '?cartesia_version=' + encodeURIComponent(env.CARTESIA_VERSION || '2026-08-14');
-  let upResp;
-  try {
-    upResp = await fetch(upstreamUrl.replace('wss://', 'https://'), {
-      headers: { Upgrade: 'websocket', 'Cartesia-Api-Key': env.CARTESIA_API_KEY },
-    });
-  } catch { await usersCall(env, '/release', { sub: session.sub, session_id: sessionId }); fail('upstream_unreachable'); return new Response(null, { status: 101, webSocket: client }); }
-  const upstream = upResp.webSocket;
-  if (!upstream) { await usersCall(env, '/release', { sub: session.sub, session_id: sessionId }); fail('upstream_rejected'); return new Response(null, { status: 101, webSocket: client }); }
-  upstream.accept();
-
+  let upstream = null;
   let released = false;
-  const cleanup = () => {
-    if (released) return; released = true;
-    ctx.waitUntil(usersCall(env, '/release', { sub: session.sub, session_id: sessionId }));
-    try { upstream.close(); } catch {}
-    try { server.close(); } catch {}
+  let poller = null;
+  let killer = null;
+  let authed = false;
+  let session = null;
+  let sessionId = null;
+
+  const fail = (reason, code) => {
+    try { server.send(JSON.stringify({ type: 'error', error: reason })); } catch {}
+    try { server.close(code || 4401, reason); } catch {}
   };
-  server.addEventListener('message', (ev) => { try { upstream.send(ev.data); } catch { cleanup(); } });
-  upstream.addEventListener('message', (ev) => { try { server.send(ev.data); } catch { cleanup(); } });
-  server.addEventListener('close', cleanup);
-  upstream.addEventListener('close', cleanup);
-  server.addEventListener('error', cleanup);
-  upstream.addEventListener('error', cleanup);
-  server.send(JSON.stringify({ type: 'session_ready', session_id: sessionId }));
+  const cleanup = (code, reason) => {
+    if (released) return; released = true;
+    if (poller) clearInterval(poller);
+    if (killer) clearTimeout(killer);
+    if (session && sessionId) ctx.waitUntil(usersCall(env, '/release', { sub: session.sub, session_id: sessionId }));
+    try { if (upstream) upstream.close(); } catch {}
+    try { server.close(code || 1000, reason || ''); } catch {}
+  };
+
+  const authTimer = setTimeout(() => { if (!authed) fail('auth_required'); },
+    parseInt(env.V2_AUTH_TIMEOUT_MS || String(DEFAULT_AUTH_TIMEOUT_MS), 10));
+
+  server.addEventListener('message', (ev) => {
+    if (authed) {
+      try { if (upstream) upstream.send(ev.data); } catch { cleanup(1011, 'upstream_send_failed'); }
+      return;
+    }
+    let token = null;
+    try { const m = JSON.parse(ev.data); if (m && m.type === 'auth' && typeof m.token === 'string') token = m.token; } catch {}
+    if (!token) { clearTimeout(authTimer); fail('auth_required'); return; }
+    authed = true; // exactly one auth attempt
+    clearTimeout(authTimer);
+    bridge(ev, token).catch(() => cleanup(1011, 'bridge_failed'));
+  });
+  server.addEventListener('close', () => cleanup(1000, 'client_closed'));
+  server.addEventListener('error', () => cleanup(1011, 'client_error'));
+
+  async function bridge(_ev, token) {
+    try {
+      session = await createSessionTokens({ secret: env.SESSION_SECRET }).verify(token);
+    } catch (e) { fail(e instanceof AuthError ? e.message : 'bad_session'); return; }
+
+    sessionId = crypto.randomUUID();
+    const cap = parseInt(env.V2_DAILY_SESSION_CAP || '10', 10);
+    const acq = await usersCall(env, '/acquire', { sub: session.sub, session_id: sessionId, daily_cap: cap });
+    if (!acq.ok) { fail(acq.error || 'not_allowed'); return; }
+
+    const agentId = env.CARTESIA_AGENT_NIGHT;
+    const upstreamBase = env.CARTESIA_UPSTREAM_WS_BASE || 'wss://api.cartesia.ai';
+    const upstreamUrl = upstreamBase + '/v1/agents/websocket/' + agentId + '?cartesia_version=' + encodeURIComponent(env.CARTESIA_VERSION || '2026-08-14');
+    let upResp;
+    try {
+      upResp = await fetch(upstreamUrl.replace('wss://', 'https://').replace('ws://', 'http://'), {
+        headers: { Upgrade: 'websocket', 'Cartesia-Api-Key': env.CARTESIA_API_KEY },
+      });
+    } catch { cleanup(1011, 'upstream_unreachable'); return; }
+    upstream = upResp.webSocket;
+    if (!upstream) { cleanup(1011, 'upstream_rejected'); return; }
+    upstream.accept();
+    upstream.addEventListener('message', (ev2) => { try { server.send(ev2.data); } catch { cleanup(1011, 'client_send_failed'); } });
+    upstream.addEventListener('close', () => cleanup(1000, 'upstream_closed'));
+    upstream.addEventListener('error', () => cleanup(1011, 'upstream_error'));
+
+    // Mid-call enforcement: re-check approval and our lease; a revoked user is
+    // cut off within one poll interval, not just at the next connect.
+    poller = setInterval(async () => {
+      try {
+        const r = await usersCall(env, '/user?sub=' + encodeURIComponent(session.sub), {});
+        if (!r.user || r.user.status !== 'approved' || !r.user.active) cleanup(4403, 'access_revoked');
+      } catch { /* transient store error: keep the call, re-check next tick */ }
+    }, STATUS_POLL_MS);
+    killer = setTimeout(() => cleanup(4408, 'max_duration'), MAX_CALL_MS);
+
+    server.send(JSON.stringify({ type: 'session_ready', session_id: sessionId }));
+  }
+
   return new Response(null, { status: 101, webSocket: client });
 }
 
