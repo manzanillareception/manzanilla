@@ -95,19 +95,20 @@ class UpgradeDataFixture : Instrumentation() {
                     check(absent.toString() == "ABSENT")
                     // Check the installed candidate, never the test APK's inlined
                     // BuildConfig. Do not log, copy or compare credential values.
+                    // Candidates must ship without an embedded Fish credential.
                     val buildConfig = targetContext.classLoader.loadClass("com.agentdeck.hotel.BuildConfig")
                     val bundled = buildConfig.getField("FISH_API_KEY").get(null) as String
-                    check(bundled.isNotBlank())
+                    check(bundled.isBlank())
                     val statusClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore\$Status")
                     val policy = targetContext.classLoader.loadClass("com.agentdeck.hotel.AudioPolicy")
                     val gate = policy.getMethod("blockReason", Boolean::class.javaPrimitiveType,
                         statusClass, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
-                        .invoke(policy.getField("INSTANCE").get(null), false, absent, true, false)
-                    check(gate == "")
+                        .invoke(policy.getField("INSTANCE").get(null), false, absent, false, false)
+                    check((gate as String).isNotEmpty())
                 }
                 else -> error("Unknown fixture case")
             }
-            val evidence = if (case == "bundled") "bundled_key=true direct_ready=true" else
+            val evidence = if (case == "bundled") "bundled_key=false byok_gate=blocked" else
                 "preferences=true private_file=true encrypted_marker=true voice_credential=true"
             result.putString("stream", "PASS case=$case $evidence\n")
             finish(-1, result)
