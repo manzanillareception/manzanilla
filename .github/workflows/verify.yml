@@ -19,6 +19,7 @@ jobs:
       - run: node --test tests/*.test.cjs
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest tests -q
+      - run: python -m unittest discover -s scripts -p 'test_provision_cartesia_v1.py' -v
       - run: pip install -r requirements-browser.txt
       - run: python -m playwright install --with-deps chromium
       - run: python tests/run_reception_browser.py

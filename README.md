@@ -2,9 +2,15 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with hotel assistance and an in-app updater. The 17.0.42 source candidate removes the retired speech provider from Android, backend sessions, web relay, worker tooling and CI. Live translation is unavailable in this legacy app until the OpenAI integration is delivered; starting it shows an explicit error without opening a microphone or contacting a provider. The recovered v27 OpenAI launcher is a separate application (`com.agentdeck`), not this repository's `dev.orange.hotel` app. Existing Cartesia V2 backend work remains separate.
+Manzanilla Reception is a landscape Android app with two V1 voice modes:
 
-**Source candidate, not a published APK:** the download links below point to the last published release and do not include this removal until a new signed release is published. [Removal scope and validation](docs/provider-removal-17.0.42.md).
+- **Translation:** OpenAI full-duplex voice between two selected languages, with a key entered in the app and one centered transcript.
+- **Night receptionist:** Cartesia voice with hotel facts and location-aware nearby suggestions. The owner-approved Cartesia credential is bundled only in signed release APKs and is extractable.
+- **Taxi:** integration point ready; booking stays unavailable until the hotel's taxi API is supplied.
+
+No Google account or admin portal is required for V1. Fish Audio is removed from active runtime paths. [V1 setup, credential scope, and limits](docs/v1-voice.md).
+
+**17.0.43 source candidate:** the latest-release download below includes these changes only after its signed publication succeeds. Physical tablet audio and OpenAI BYOK access still require device acceptance.
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -20,7 +26,7 @@ All releases: https://github.com/somdipto/manzanilla/releases
 
 1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
-3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Use the staff-setup gear for the hotel service.
+3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Use Settings for the OpenAI translation key and Night receptionist setup.
 
 <p align="center"><img src="docs/screens/17.0.21-home-fixture.png" alt="17.0.21 reception home in an isolated browser fixture" width="720"></p>
 

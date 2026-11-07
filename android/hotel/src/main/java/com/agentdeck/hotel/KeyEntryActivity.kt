@@ -27,11 +27,13 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/** Hotel administration requires the device credential; translation status exposes no keys. */
+/** Device-local V1 provider/profile setup; no cloud account is required. */
 class KeyEntryActivity : Activity() {
-    // The public internal status path exposes no hotel administration or credential fields.
     private val voiceOnly get() = intent.getBooleanExtra("voice_only", false)
-    private val setupTitle get() = if (voiceOnly) "Translation unavailable" else "Staff setup"
+    private val nightOnly get() = intent.getBooleanExtra("night_only", false)
+    private val v1Setup get() = intent.getBooleanExtra("v1_setup", false)
+    private val publicSetup get() = voiceOnly || nightOnly || v1Setup
+    private val setupTitle get() = when { voiceOnly -> "OpenAI translation key"; nightOnly -> "Night receptionist setup"; v1Setup -> "Reception setup"; else -> "Staff setup" }
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
     private var authenticated = false
     private var authenticationInFlight = false
@@ -55,13 +57,13 @@ class KeyEntryActivity : Activity() {
         window.navigationBarColor = background
         if (light) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        if (!voiceOnly) lockedView("Use your normal device PIN, password or pattern to open setup. No separate staff account is required.")
+        if (!publicSetup) lockedView("Use your normal device PIN, password or pattern to open setup. No separate staff account is required.")
     }
 
     override fun onResume() {
         super.onResume()
         foreground = true
-        if (voiceOnly) {
+        if (publicSetup) {
             showConfiguration()
         } else if (authenticationAccepted && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
             authenticationAccepted = false
@@ -83,7 +85,7 @@ class KeyEntryActivity : Activity() {
         setIntent(intent)
         lock()
         if (foreground && !authenticationInFlight) {
-            if (voiceOnly) showConfiguration() else requestAuthentication()
+            if (publicSetup) showConfiguration() else requestAuthentication()
         }
     }
 
@@ -92,7 +94,7 @@ class KeyEntryActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != AUTH_REQUEST || !authenticationInFlight) return
         authenticationInFlight = false
-        if (voiceOnly) { authenticationAccepted = false; return }
+        if (publicSetup) { authenticationAccepted = false; return }
         authenticationAccepted = resultCode == RESULT_OK && keyguard.isDeviceSecure
         if (!authenticationAccepted) finish()
     }
@@ -104,7 +106,7 @@ class KeyEntryActivity : Activity() {
         dialog = null
         fields.forEach { it.setText("") }
         fields.clear()
-        if (voiceOnly) {
+        if (publicSetup) {
             setContentView(column().apply { addView(label(setupTitle, 24f)) })
         } else lockedView("Setup is locked. Confirm this device's screen lock to continue.")
     }
@@ -112,7 +114,7 @@ class KeyEntryActivity : Activity() {
     @Suppress("DEPRECATION")
     private fun requestAuthentication() {
         authenticated = false
-        if (voiceOnly) return
+        if (publicSetup) return
         if (!keyguard.isDeviceSecure) {
             lockedView("Staff setup is unavailable: no device screen-lock credential is enrolled. A tablet administrator must set a PIN, password or pattern through the tablet's managed Android Security settings, then return and authenticate. Guest setup cannot enroll or reset a credential.")
             return
@@ -132,7 +134,7 @@ class KeyEntryActivity : Activity() {
     }
 
     private fun authorized(): Boolean {
-        if (voiceOnly) return foreground
+        if (publicSetup) return foreground
         if (foreground && authenticated && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) return true
         lock()
         if (foreground && !authenticationInFlight) requestAuthentication()
@@ -153,13 +155,32 @@ class KeyEntryActivity : Activity() {
         val column = column()
         if (voiceOnly) {
             column.addView(label(setupTitle, 24f))
-            column.addView(label(AudioPolicy.BLOCK_REASON))
-            column.addView(button("Close") { finish() })
+            column.addView(label("Used only for live translation. Your key is encrypted on this device, never included in the APK. Reopen this screen to replace or remove it."))
+            addProvider(column, "OpenAI", "openai")
+            column.addView(button("Done") { finish() })
+            setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
+            return
+        }
+        if (nightOnly) {
+            showNightProfile(column)
+            return
+        }
+        if (v1Setup) {
+            column.addView(label(setupTitle, 24f))
+            column.addView(button("OpenAI translation key") {
+                startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", true))
+            })
+            column.addView(button("Night receptionist setup") {
+                startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("night_only", true))
+            })
+            column.addView(button("Done") { finish() })
             setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
             return
         }
         column.addView(label("Staff setup", 24f))
-        column.addView(label(AudioPolicy.BLOCK_REASON + " Hotel service setup below is for staff-led assistance."))
+        column.addView(label("Hotel service setup is for staff-led assistance. Translation and night reception have separate V1 settings."))
+        column.addView(button("OpenAI translation key") { startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", true)) })
+        column.addView(button("Night receptionist setup") { startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("night_only", true)) })
         column.addView(label("Hotel service", 20f))
         val connectionUrl = EditText(this).apply {
             hint = "HTTPS hotel service URL"
@@ -185,6 +206,59 @@ class KeyEntryActivity : Activity() {
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             addView(column)
         })
+    }
+
+    private fun showNightProfile(column: LinearLayout) {
+        val store = NightProfileStore(this)
+        val profile = store.load()
+        column.addView(label(setupTitle, 24f))
+        column.addView(label("Supply the hotel facts guests may hear. Leave unknown facts blank. Location is shared with the receptionist only when a conversation starts."))
+        fun input(title: String, value: String, multiline: Boolean = false): EditText {
+            column.addView(label(title))
+            return EditText(this).apply {
+                setText(value)
+                hint = title
+                inputType = InputType.TYPE_CLASS_TEXT or if (multiline) InputType.TYPE_TEXT_FLAG_MULTI_LINE else InputType.TYPE_TEXT_VARIATION_NORMAL
+                if (!multiline) setSingleLine() else minLines = 2
+                isSaveEnabled = false
+                setSaveFromParentEnabled(false)
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                setTextColor(ink)
+                setHintTextColor(hintInk)
+                backgroundTintList = ColorStateList.valueOf(accent)
+                fields.add(this)
+                column.addView(this)
+            }
+        }
+        val name = input("Hotel name", profile.name)
+        val address = input("Hotel address", profile.address)
+        val area = input("City / area", profile.area)
+        val hours = input("Reception opening hours", profile.openingHours)
+        val facts = input("Approved hotel facts and check-in guidance", profile.facts, true)
+        val latitude = input("Hotel latitude (optional)", profile.latitude?.toString().orEmpty())
+        val longitude = input("Hotel longitude (optional)", profile.longitude?.toString().orEmpty())
+        val localPack = input("Approved nearby places JSON (optional)", profile.localPackJson, true)
+        val status = label("")
+        column.addView(status)
+        column.addView(button("Save receptionist settings") {
+            if (!authorized()) return@button
+            val latText = latitude.text.toString().trim()
+            val lonText = longitude.text.toString().trim()
+            val lat = latText.takeIf { it.isNotEmpty() }?.toDoubleOrNull()
+            val lon = lonText.takeIf { it.isNotEmpty() }?.toDoubleOrNull()
+            if ((latText.isNotEmpty() && lat == null) || (lonText.isNotEmpty() && lon == null) ||
+                (lat == null) != (lon == null) || (lat != null && (!lat.isFinite() || lat !in -90.0..90.0)) ||
+                (lon != null && (!lon.isFinite() || lon !in -180.0..180.0))) {
+                status.text = "Enter both coordinates within the valid latitude/longitude ranges, or leave both blank."
+            } else if (store.save(name.text.toString(), address.text.toString(), area.text.toString(),
+                    hours.text.toString(), facts.text.toString(), lat, lon,
+                    localPack.text.toString().ifBlank { "[]" }, profile.availability, profile.availabilityUpdatedAtMillis)) {
+                setResult(RESULT_OK)
+                finish()
+            } else status.text = "Settings were not saved. Check field lengths and the nearby-places JSON, then try again."
+        })
+        column.addView(button("Cancel") { finish() })
+        setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
     }
 
     private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null) {
@@ -229,6 +303,13 @@ class KeyEntryActivity : Activity() {
             hint = "New $provider key (not shown)"
             contentDescription = "New $provider key, masked"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            isSaveEnabled = false
+            setSaveFromParentEnabled(false)
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            if (Build.VERSION.SDK_INT >= 30) importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
+            filterTouchesWhenObscured = true
+            setSingleLine()
             transformationMethod = object : PasswordTransformationMethod() {
                 // Android's default password transform can briefly reveal the last typed glyph.
                 override fun getTransformation(source: CharSequence, view: View): CharSequence = object : CharSequence {
@@ -238,13 +319,6 @@ class KeyEntryActivity : Activity() {
                     override fun toString(): String = "\u2022".repeat(length)
                 }
             }
-            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-            isSaveEnabled = false
-            setSaveFromParentEnabled(false)
-            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-            if (Build.VERSION.SDK_INT >= 30) importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
-            filterTouchesWhenObscured = true
-            setSingleLine()
             setTextColor(ink)
             setHintTextColor(hintInk)
             backgroundTintList = ColorStateList.valueOf(accent)
@@ -266,6 +340,7 @@ class KeyEntryActivity : Activity() {
                 field.setText("")
                 refresh()
                 Toast.makeText(this, "$provider key securely saved.", Toast.LENGTH_SHORT).show()
+                if (voiceOnly) { setResult(RESULT_OK); finish() }
             } else {
                 status.text = "$provider: ${connection?.errorMessage ?: store.errorMessage}"
             }

@@ -59,19 +59,23 @@ def run_startup_fixture(browser, legacy_object_api=False):
         def receive(event):
             page.evaluate("event => window.manzania.receive(event)", event)
 
-        receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off", "staff_language": "en"})
+        receive({"type": "reception_info", "translation_available": True, "reception_available": True, "openai_configured": True, "local_audio_state": "off", "staff_language": "en"})
         receive({"type": "language_preferences", "language": "en", "staff_language": "en"})
         page.locator('[data-action="translation"]').click()
         assert page.locator('[data-action="start"]').is_disabled(), "Same-language start must be blocked"
         assert "two different languages" in page.locator("#translation-readiness").inner_text()
-        receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off",
-                 "audio_gate": "Live translation is unavailable in this build."})
-        assert "Live translation is unavailable in this build." in page.locator("#translation-readiness").inner_text()
+        assert page.locator('label[for="language"]').inner_text() == "Language 1"
+        assert page.locator('label[for="staff_language"]').inner_text() == "Language 2"
+        receive({"type": "reception_info", "translation_available": False, "reception_available": True, "openai_configured": False, "local_audio_state": "off",
+                 "audio_gate": "Add your OpenAI API key to use live translation."})
+        assert "OpenAI" in page.locator("#translation-readiness").inner_text()
         assert page.locator('[data-action="start"]').is_disabled(), "Unavailable translation must not offer a start"
-        assert page.locator('[data-action="setup-translation"]').count() == 0, "Removed provider has no key setup action"
+        assert page.locator('[data-action="setup-translation"]').is_visible(), "Missing OpenAI key offers in-app BYOK setup"
+        page.locator('[data-action="setup-translation"]').click()
+        assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 1
         assert page.locator("#settings").is_visible(), "Translation status must remain reachable"
         page.locator('#settings').click()
-        assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 1
+        assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 2
         assert not page.evaluate("fixtureMessages.some(event => event.action === 'start')")
         assert not page.evaluate("fixtureMessages.some(event => event.action === 'settings')"), "Translation status must not expose hotel administration"
         receive({"type": "visibility", "visible": False})
@@ -80,11 +84,11 @@ def run_startup_fixture(browser, legacy_object_api=False):
         assert page.locator('#language').input_value() == "en"
         assert page.locator('#staff_language').input_value() == "en"
         assert page.locator('[data-action="start"]').is_disabled()
-        # A synthetic native bridge can advertise audio to exercise the generic
-        # language/session message contract. The shipped Activity never does so.
-        receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off"})
+        # The isolated bridge advertises configured OpenAI availability without a key.
+        receive({"type": "reception_info", "translation_available": True, "reception_available": True,
+                 "openai_configured": True, "local_audio_state": "off"})
         page.locator('#language').select_option("es")
-        assert page.locator('[data-action="start"]').is_enabled(), "Distinct languages with configured audio cannot start"
+        assert page.locator('[data-action="start"]').is_enabled(), "Distinct languages with configured translation must be able to start"
         page.locator('[data-action="start"]').click()
         starts = page.evaluate("fixtureMessages.filter(event => event.action === 'start')")
         assert len(starts) == 1 and starts[0]["language"] == "es" and starts[0]["staff_language"] == "en", starts

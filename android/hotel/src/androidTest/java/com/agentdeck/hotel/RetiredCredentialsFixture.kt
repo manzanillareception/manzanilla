@@ -25,8 +25,8 @@ internal object RetiredCredentialsFixture {
         try {
             val hotel = HotelConnection(context)
             check(hotel.save("https://fixture.hotel.invalid", "fixture-only-" + "x".repeat(32)))
-            val other = SecretStore(context, "upgrade-test")
-            check(other.save("fixture-only-upgrade-marker"))
+            val other = SecretStore(context, "openai")
+            check(other.save("fixture-only-openai-migration-marker"))
             val legacy = context.getSharedPreferences("fish", Context.MODE_PRIVATE)
             check(legacy.edit().putString("k", "invalid-retired-encoding").commit())
             val retiredFile = File(root, "credential-" + Base64.getUrlEncoder().withoutPadding()
@@ -39,7 +39,7 @@ internal object RetiredCredentialsFixture {
             check(!deck.contains("translation_direct_fish"))
             check(deck.getBoolean("retired_audio_credentials_removed", false))
             check(hotel.load()?.base == "https://fixture.hotel.invalid")
-            check(other.load() == "fixture-only-upgrade-marker")
+            check(other.load() == "fixture-only-openai-migration-marker")
             check(RetiredCredentials.remove(context))
             check(hotel.load() != null && other.status() == SecretStore.Status.READY)
         } finally {

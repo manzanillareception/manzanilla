@@ -28,7 +28,7 @@ run_fixture() {
   grep -q "PASS case=$fixture " "$evidence/$label.txt"
   grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
 }
-for fixture in reception-bridge translation-unavailable retired-credentials update-delivery; do
+for fixture in reception-bridge translation-unavailable permission-lifecycle retired-credentials update-delivery; do
   run_fixture "$fixture"
 done
 # Personal translation setup must work whether Android has a screen lock or not.

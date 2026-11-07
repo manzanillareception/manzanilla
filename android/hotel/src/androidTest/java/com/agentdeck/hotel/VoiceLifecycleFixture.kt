@@ -11,18 +11,22 @@ class VoiceLifecycleFixture : Instrumentation() {
         val result = Bundle()
         val case = args?.getString("case") ?: "translation-unavailable"
         try {
+            ProviderBuildFixture.verifyDebug(this)
             when (case) {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
+                "permission-lifecycle" -> PermissionLifecycleFixture.verify(this)
                 "retired-credentials" -> RetiredCredentialsFixture.verify(this)
-                "translation-unavailable" -> ReceptionWebViewFixture.verifyTranslationUnavailable(this)
+                // Retained runner alias: V1 translation is gated only until BYOK is saved.
+                "translation-unavailable", "translation-missing-key" -> ReceptionWebViewFixture.verifyTranslationMissingKey(this)
                 "update-delivery" -> UpdaterFixture.verify(this)
                 else -> error("Unknown fixture case: $case")
             }
             result.putString("stream", "PASS case=$case \n")
             finish(-1, result)
         } catch (e: Throwable) {
-            result.putString("stream", "FAIL: ${e.javaClass.simpleName}: ${e.message}\n")
+            // Arbitrary exception text must never expose typed or stored credentials.
+            result.putString("stream", "FAIL case=$case ${e.javaClass.simpleName}; fixture did not complete\n")
             finish(0, result)
         }
     }

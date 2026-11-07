@@ -1,5 +1,7 @@
 package com.agentdeck.hotel
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
@@ -22,7 +24,7 @@ import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Owns staff-led gateway sessions and updates; the packaged UI cannot capture audio. */
+/** Native-only credentials and audio; one visible session owns the microphone and speaker. */
 class HotelActivity : Activity() {
     private var reception: ReceptionView? = null
     private val deck by lazy { getSharedPreferences("deck", MODE_PRIVATE) }
@@ -41,6 +43,17 @@ class HotelActivity : Activity() {
     }
     private val hotelConnection by lazy { HotelConnection(this) }
     private var gateway: HotelGateway? = null
+    private val openAiStore by lazy { SecretStore(this, "openai") }
+    private val profileStore by lazy { NightProfileStore(this) }
+    private val location by lazy { DeviceLocation(this, profileStore) }
+    private val nightTools by lazy { NightTools(profileStore, location) }
+    private var voice: NativeVoiceSession? = null
+    private var pendingMicrophone: SessionOwner.Lease? = null
+    private var permissionDialog = false
+    private var connectingLease: SessionOwner.Lease? = null
+    private fun openAiConfigured() = openAiStore.status() == SecretStore.Status.READY
+    private fun cartesiaConfigured() = BuildConfig.CARTESIA_API_KEY.isNotBlank() &&
+        BuildConfig.CARTESIA_AGENT_ID.matches(Regex("agent_[A-Za-z0-9_-]+"))
     private val afterRelease = ArrayList<() -> Unit>()
     private var night = false
     private var foreground = false
@@ -61,7 +74,7 @@ class HotelActivity : Activity() {
 
     private fun backendConfigured() = hotelConnection.load() != null
     private fun canInstallUpdate(): Boolean = foreground && !destroyed && owner.current == null &&
-        !owner.closing && audioState == "off"
+        !owner.closing && audioState == "off" && !DuplexAudio.hasUnreleasedResources()
     private fun current(lease: SessionOwner.Lease) = owner.accepts(lease.request.id, lease.generation)
     private fun scoped(lease: SessionOwner.Lease, message: JSONObject) = message
         .put("session_id", lease.request.id).put("generation", lease.generation)
@@ -74,23 +87,24 @@ class HotelActivity : Activity() {
 
     private fun pushState() {
         val page = reception ?: return
-        val ready = backendConfigured()
-        val audioGate = AudioPolicy.blockReason()
-        val audioReady = audioGate.isEmpty()
+        val translationReady = openAiConfigured()
+        val receptionReady = cartesiaConfigured()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
-        page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
-            .put("sample_hotel", false).put("configured", ready)
-            .put("audio_available", audioReady)
+        page.push(JSONObject().put("type", "reception_info").put("hotel_name", profileStore.load().name.ifBlank { "Hotel reception" })
+            .put("sample_hotel", false).put("configured", receptionReady)
+            .put("translation_available", translationReady).put("reception_available", receptionReady)
+            .put("openai_configured", translationReady).put("audio_available", translationReady)
             .put("local_audio_state", audioState)
-            .put("audio_gate", audioGate)
+            .put("audio_gate", AudioPolicy.translationBlockReason(translationReady))
+            .put("reception_gate", AudioPolicy.receptionBlockReason(receptionReady))
             .apply { java.util.Locale.getDefault().language.takeIf(DeskLanguages::has)?.let { put("staff_language", it) } })
         val guest = deck.getString("reception_guest_language", null)
         val staff = deck.getString("reception_staff_language", null)
         if (guest != null && staff != null) page.push(JSONObject().put("type", "language_preferences")
             .put("language", guest).put("staff_language", staff))
-        page.push(JSONObject().put("type", "prep").put("status", if (ready) "ready" else "nokey").put("version", BuildConfig.VERSION_NAME))
-        page.push(JSONObject().put("type", "connection").put("connected", ready))
+        page.push(JSONObject().put("type", "prep").put("status", if (translationReady || receptionReady) "ready" else "nokey").put("version", BuildConfig.VERSION_NAME))
+        page.push(JSONObject().put("type", "connection").put("connected", translationReady || receptionReady))
     }
 
     private fun begin(request: SessionOwner.Request) {
@@ -102,13 +116,12 @@ class HotelActivity : Activity() {
                 .put("session_id", request.id).put("generation", 0))
             return
         }
-        if (request.mode == "translation") {
-            // Reject before acquiring a session or asking for microphone access.
+        val blocked = AudioPolicy.blockReason(request.mode, openAiConfigured(), cartesiaConfigured())
+        if (blocked.isNotEmpty()) {
             reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
                 .put("session_id", request.id).put("generation", 0))
             reception?.push(JSONObject().put("type", "reception_event").put("phase", "error")
-                .put("text", AudioPolicy.BLOCK_REASON)
-                .put("session_id", request.id).put("generation", 0))
+                .put("text", blocked).put("session_id", request.id).put("generation", 0))
             return
         }
         val lease = owner.acquire(request) ?: run { notice("Wait until the previous microphone release is confirmed before starting again."); return }
@@ -116,22 +129,44 @@ class HotelActivity : Activity() {
         audioState = "off"
         phase(lease, "connecting")
         audio(lease, "off")
-        connect(lease)
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingMicrophone = lease
+            permissionDialog = true
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5)
+        } else connect(lease)
     }
 
     private fun connect(lease: SessionOwner.Lease) {
-        if (!current(lease) || !foreground) return
+        if (!current(lease) || !foreground || connectingLease == lease) return
+        connectingLease = lease
+        pendingMicrophone = null
         val request = lease.request
-        if (request.mode == "reception") {
+        val key = if (request.mode == "translation") openAiStore.load().orEmpty() else BuildConfig.CARTESIA_API_KEY
+        val context = profileStore.load().contextJson().toString()
+        voice = NativeVoiceSession(this, request.mode, { listener ->
+            if (request.mode == "translation") OpenAiTranslationTransport(key,
+                DeskLanguages.english(request.guest), DeskLanguages.english(request.staff), listener)
+            else CartesiaNightTransport(key, BuildConfig.CARTESIA_AGENT_ID, context, listener)
+        }, nightTools, push = { event ->
+            if (current(lease)) {
+                val type = event.optString("type")
+                if (type == "audio_state") audioState = event.optString("state", "unknown")
+                if (type == "translation_text" || type == "assistant_text" ||
+                    (type == "energy" && event.optDouble("level") > 0.05)) lastActivity = SystemClock.elapsedRealtime()
+                if (type == "reception_event" && event.optString("phase") in listOf("error", "ended")) {
+                    stopSession(if (event.optString("phase") == "ended") "stopped" else "error", event.optString("text"))
+                } else push(lease, event)
+            }
+        })
+        voice?.start()
+        if (!current(lease)) return
+        // Optional staff backend operations remain separate from native voice readiness.
+        if (request.mode == "reception") hotelConnection.load()?.let { credentials ->
             gateway?.dispose()
-            val credentials = hotelConnection.load()
-            gateway = HotelGateway(credentials?.base.orEmpty(), credentials?.token.orEmpty(),
+            gateway = HotelGateway(credentials.base, credentials.token,
                 { currentLease, event -> runOnUiThread { if (current(currentLease)) push(currentLease, event) } },
                 { currentLease, event -> runOnUiThread { if (current(currentLease)) dialOperation(currentLease, event) } })
                 .also { it.begin(lease) }
-            audio(lease, "off")
-            phase(lease, "ready")
-            return
         }
     }
 
@@ -139,21 +174,25 @@ class HotelActivity : Activity() {
         if (done != null) afterRelease.add(done)
         val lease = owner.beginClose()
         if (lease == null) { if (owner.current == null) finishReleaseActions(); return }
+        pendingMicrophone = null
+        connectingLease = null
         gateway?.end()
         phase(lease, "ending")
+        audioState = "stopping"
         audio(lease, "stopping")
-        val released: () -> Unit = {
+        val oldVoice = voice.also { voice = null }
+        val released: (Boolean) -> Unit = { knownOff ->
             runOnUiThread {
                 if (owner.current == lease && owner.closing) {
-                    audioState = "off"
-                    audio(lease, "off")
-                    owner.released(lease, true)
-                    phase(lease, reason, text)
-                    finishReleaseActions()
+                    audioState = if (knownOff) "off" else "unknown"
+                    audio(lease, audioState)
+                    owner.released(lease, knownOff)
+                    phase(lease, if (knownOff) reason else "error", if (knownOff) text else "Audio cleanup could not be confirmed. Reopen the app before restarting.")
+                    if (knownOff) finishReleaseActions() else afterRelease.clear()
                 }
             }
         }
-        released()
+        if (oldVoice != null) oldVoice.stop(released) else released(true)
     }
 
     private fun finishReleaseActions() {
@@ -171,9 +210,9 @@ class HotelActivity : Activity() {
         } catch (_: Exception) { ringing.set(false) }
     }
 
-    private fun openStaffSetup(voiceOnly: Boolean = false) = stopSession(done = {
+    private fun openStaffSetup(voiceOnly: Boolean = false, nightOnly: Boolean = false) = stopSession(done = {
         if (!destroyed && foreground) {
-            val setup = Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", voiceOnly)
+            val setup = Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", voiceOnly).putExtra("night_only", nightOnly).putExtra("v1_setup", !voiceOnly && !nightOnly)
             if (voiceOnly) {
                 @Suppress("DEPRECATION")
                 startActivityForResult(setup, 41)
@@ -220,9 +259,11 @@ class HotelActivity : Activity() {
     private fun handle(message: JSONObject) {
         val action = message.optString("action")
         when (action) {
-            "stop", "message", "confirm", "checkin", "operator", "taxi", "question" ->
+            "stop", "silence" -> if (owner.current != null && !owner.acceptsCancellation(
+                message.optString("session_id"), if (message.has("generation")) message.optInt("generation", -1) else null)) return
+            "message", "confirm", "checkin", "operator", "taxi", "question" ->
                 if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), duringClose = true)) return
-            "silence", "activity", "mute" -> if (owner.current != null &&
+            "activity", "mute" -> if (owner.current != null &&
                 !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
         }
         when (action) {
@@ -243,6 +284,16 @@ class HotelActivity : Activity() {
             "bell" -> ringBell()
             "settings" -> openStaffSetup()
             "voice_setup" -> openStaffSetup(voiceOnly = true)
+            "night_setup" -> openStaffSetup(nightOnly = true)
+            "request_location" -> {
+                if (!foreground) return
+                if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                    checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    permissionDialog = true
+                    requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), 6)
+                } else showLocation()
+            }
+            "mute" -> voice?.setMuted(message.optBoolean("muted"))
             "info" -> pushState()
             "start" -> {
                 val id = message.optString("session_id")
@@ -265,7 +316,8 @@ class HotelActivity : Activity() {
                 else notice("This request is no longer available. Review a new request.")
             }
             "checkin", "operator", "taxi", "question" -> owner.current?.takeIf { current(it) && it.request.mode == "reception" }?.let {
-                gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
+                if (gateway == null) notice(if (action == "taxi") "Taxi booking is unavailable until the hotel's taxi API is connected." else "Ask the night receptionist by voice, or contact hotel staff.")
+                else gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
             }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
             "silence" -> if (owner.current != null) stopSession()
@@ -319,6 +371,8 @@ class HotelActivity : Activity() {
             returnToTranslation = false
             reception?.push(JSONObject().put("type", "translation_setup_return"))
         }
+        pendingMicrophone?.takeIf { current(it) && !permissionDialog &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED }?.let(::connect)
         updater.onForeground()
         updater.check()
         ui.removeCallbacks(updatePoll)
@@ -334,10 +388,38 @@ class HotelActivity : Activity() {
     override fun onPause() {
         foreground = false
         ui.removeCallbacks(updatePoll)
-        stopSession()
-        reception?.setShown(false)
+        if (!permissionDialog) {
+            stopSession()
+            reception?.setShown(false)
+        }
         super.onPause()
     }
+    private fun showLocation() {
+        location.request { result -> runOnUiThread {
+            if (!destroyed && foreground) reception?.push(JSONObject().put("type", "notice").put("text",
+                if (result.optString("status") == "available") "Location is ready for nearby suggestions."
+                else "Location unavailable. Add the hotel coordinates in Night setup."))
+        } }
+    }
+
+    @Deprecated("Android API 26 permission callback")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        permissionDialog = false
+        if (requestCode == 5) {
+            val lease = pendingMicrophone ?: return
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                if (foreground) connect(lease)
+            } else stopSession("error", "Microphone access is required for voice. You can enable it in Android settings.")
+        } else if (requestCode == 6 && foreground) showLocation()
+    }
+
+    override fun onStop() {
+        // A system permission sheet may pause us; actual backgrounding always releases audio.
+        stopSession()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         destroyed = true
         if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
@@ -346,6 +428,8 @@ class HotelActivity : Activity() {
         stopSession(done = {
             gateway?.dispose()
         })
+        nightTools.close()
+        location.close()
         reception?.dispose(); reception = null
         super.onDestroy()
     }
