@@ -2,10 +2,7 @@ package com.agentdeck.hotel
 
 import android.app.Instrumentation
 import android.Manifest
-import android.accessibilityservice.AccessibilityService
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import android.widget.FrameLayout
 import com.agentdeck.ui.ReceptionView
@@ -14,103 +11,44 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Exercises the shipped assets and real addJavascriptInterface boundary, with no audio provider. */
 internal object ReceptionWebViewFixture {
-    /** A real system permission dialog, with empty credentials so granting cannot call Fish. */
-    fun verifyMicrophonePermission(instrumentation: Instrumentation, outcome: String = "grant") {
+    /** A stale or forged bridge start cannot turn on capture after provider removal. */
+    fun verifyTranslationUnavailable(instrumentation: Instrumentation) {
         val context = instrumentation.targetContext
-        check(BuildConfig.FISH_API_KEY.isEmpty() && !SecretStore(context, "fish").has()
-            && HotelConnection(context).load() == null) { "Use an isolated, unconfigured key-free APK" }
-        check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            "Revoke RECORD_AUDIO on the disposable emulator before this fixture"
-        }
+        val permissionBefore = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
         val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as HotelActivity
         val ownerField = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
-        val permissionField = HotelActivity::class.java.getDeclaredField("pendingPermission").apply { isAccessible = true }
+        val audioField = HotelActivity::class.java.getDeclaredField("audioState").apply { isAccessible = true }
+        val handle = HotelActivity::class.java.getDeclaredMethod("handle", JSONObject::class.java).apply { isAccessible = true }
         val page = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }.get(activity) as ReceptionView
         lateinit var browser: WebView
-        val forward = HotelActivity::class.java.getDeclaredMethod("forward", JSONObject::class.java).apply { isAccessible = true }
-        val keyReads = AtomicInteger()
-        // Observe that granting reaches the real Fish start, while ensuring that it has no credential.
-        instrumentation.runOnMainSync {
-            browser = page.getChildAt(0) as WebView
-            HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }.set(activity, lazy {
-                FishVoice(context, { event -> activity.runOnUiThread { forward.invoke(activity, event) } }) {
-                    keyReads.incrementAndGet()
-                    ""
-                }
-            })
-        }
-        fun evaluate(script: String) = evaluate(instrumentation, browser, script)
-        fun permissionButton(allow: Boolean = true): AccessibilityNodeInfo? {
-            val root = instrumentation.uiAutomation.rootInActiveWindow ?: return null
-            for (pkg in listOf("com.android.permissioncontroller", "com.google.android.permissioncontroller", "com.android.packageinstaller")) {
-                for (id in if (allow) listOf("permission_allow_foreground_only_button", "permission_allow_button") else listOf("permission_deny_button")) {
-                    val node = root.findAccessibilityNodeInfosByViewId("$pkg:id/$id").firstOrNull()
-                    if (node != null) return node
-                }
-            }
-            return null
-        }
+        instrumentation.runOnMainSync { browser = page.getChildAt(0) as WebView }
+        fun js(script: String) = evaluate(instrumentation, browser, script)
         try {
-            val loadedDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
-            while (evaluate("typeof window.manzania === 'object'") != "true") {
-                check(System.nanoTime() < loadedDeadline) { "Reception did not initialize" }
-                Thread.sleep(100)
-            }
-            instrumentation.runOnMainSync {
-                page.push(JSONObject().put("type", "reception_info").put("audio_available", true).put("local_audio_state", "off"))
-                page.push(JSONObject().put("type", "language_preferences").put("language", "fr").put("staff_language", "en"))
-            }
-            evaluate("document.querySelector('[data-action=translation]').click()")
-            check(evaluate("document.querySelector('[data-action=start]').disabled") == "false")
-            evaluate("document.querySelector('[data-action=start]').click()")
-            var button: AccessibilityNodeInfo? = null
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
-            while (button == null && System.nanoTime() < deadline) {
-                button = permissionButton()
-                if (button == null) Thread.sleep(100)
-            }
-            check(button != null) { "System microphone permission dialog did not appear" }
-            var preserved = false
-            instrumentation.runOnMainSync {
-                preserved = permissionField.get(activity) != null && (ownerField.get(activity) as SessionOwner).current?.request?.mode == "translation"
-            }
-            check(preserved) { "Opening microphone permission discarded the pending translation session" }
-            check(evaluate("document.documentElement.dataset.page") == "\"active\"") { "Permission dialog detached the JS conversation" }
-            check(evaluate("document.documentElement.dataset.captureActive") == "\"true\"")
-            if (outcome == "background") {
-                check(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME))
-            } else {
-                check((if (outcome == "deny") permissionButton(false) else button)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
-                    "Cannot tap system permission $outcome"
-                }
-            }
-            val resultDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
-            while (outcome == "grant" && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                check(System.nanoTime() < resultDeadline) { "Microphone grant did not complete" }
+            while (js("typeof window.manzania === 'object'") != "true") {
+                check(System.nanoTime() < deadline) { "Reception did not initialize" }
                 Thread.sleep(100)
             }
-            var released = false
-            while (!released) {
+            js("document.querySelector('[data-action=translation]').click()")
+            check(js("document.body.innerText.includes('Live translation is unavailable in this build.')") == "true")
+            check(js("!document.querySelector('[data-action=start]:not([disabled])')") == "true") {
+                "Unavailable translation exposed an enabled Start button"
+            }
+            repeat(2) {
                 instrumentation.runOnMainSync {
-                    released = permissionField.get(activity) == null && (ownerField.get(activity) as SessionOwner).current == null
+                    handle.invoke(activity, JSONObject().put("action", "start").put("mode", "translation")
+                        .put("session_id", UUID.randomUUID().toString()).put("language", "fr").put("staff_language", "en"))
+                    check((ownerField.get(activity) as SessionOwner).current == null) { "Rejected translation retained session ownership" }
+                    check(audioField.get(activity) == "off") { "Rejected translation changed audio state" }
                 }
-                // The real Fish start reaches its missing-credential gate and releases the session.
-                check(System.nanoTime() < resultDeadline) { "Credential-free permission start stayed active" }
-                if (!released) Thread.sleep(100)
             }
-            check(keyReads.get() == if (outcome == "grant") 1 else 0) { "Permission $outcome did not start exactly once or started when denied/backgrounded" }
-            if (outcome != "background") {
-                check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"") { "Permission result left JS capture active" }
-                val expected = if (outcome == "deny") "Microphone permission is required" else "configure or recover"
-                check(evaluate("document.body.innerText.indexOf('$expected') >= 0") == "true") { "Permission result lost its error detail" }
-            }
+            check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == permissionBefore)
+            check(js("document.documentElement.dataset.captureActive") == "\"false\"")
         } finally {
-            if (permissionButton() != null) instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             instrumentation.runOnMainSync { activity.finish() }
         }
     }
@@ -124,7 +62,6 @@ internal object ReceptionWebViewFixture {
     }
 
     fun verify(instrumentation: Instrumentation) {
-        check(BuildConfig.FISH_API_KEY.isEmpty()) { "Use a key-free fixture build" }
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val messages = LinkedBlockingQueue<JSONObject>()

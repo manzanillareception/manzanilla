@@ -30,7 +30,7 @@ class UpgradeDataFixture : Instrumentation() {
         val case = args?.getString("case").takeIf { it in setOf("seed", "verify", "bundled") } ?: "unknown"
         try {
             check(args?.getString("isolated") == "1")
-            check(Build.HARDWARE in setOf("ranchu", "goldfish"))
+            check(Build.HARDWARE == "ranchu")
             check(targetContext.packageName == TARGET && context.packageName == "$TARGET.test")
             val marker = args?.getString("marker") ?: error("Missing fixture marker")
             check(Regex("[0-9a-fA-F]{40}").matches(marker))
@@ -44,7 +44,7 @@ class UpgradeDataFixture : Instrumentation() {
             // production classes into the test APK. Only synthetic data is used.
             val secretClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore")
             val voiceStore = secretClass.getConstructor(Context::class.java, String::class.java)
-                .newInstance(targetContext, "fish")
+                .newInstance(targetContext, "upgrade-test")
             val voiceMarker = "fixture-only-voice-$marker"
 
             when (case) {
@@ -93,22 +93,16 @@ class UpgradeDataFixture : Instrumentation() {
                     secretClass.getMethod("clear").invoke(voiceStore)
                     val absent = secretClass.getMethod("status").invoke(voiceStore)
                     check(absent.toString() == "ABSENT")
-                    // Check the installed candidate, never the test APK's inlined
-                    // BuildConfig. Do not log, copy or compare credential values.
-                    // Candidates must ship without an embedded Fish credential.
+                    // Inspect field names only; never read or print credential values.
                     val buildConfig = targetContext.classLoader.loadClass("com.agentdeck.hotel.BuildConfig")
-                    val bundled = buildConfig.getField("FISH_API_KEY").get(null) as String
-                    check(bundled.isBlank())
-                    val statusClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore\$Status")
+                    check(buildConfig.fields.none { it.name.endsWith("API_KEY") || it.name.endsWith("VOICE_ID") })
                     val policy = targetContext.classLoader.loadClass("com.agentdeck.hotel.AudioPolicy")
-                    val gate = policy.getMethod("blockReason", Boolean::class.javaPrimitiveType,
-                        statusClass, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
-                        .invoke(policy.getField("INSTANCE").get(null), false, absent, false, false)
-                    check((gate as String).isNotEmpty())
+                    val gate = policy.getMethod("blockReason").invoke(policy.getField("INSTANCE").get(null))
+                    check(gate == "Live translation is unavailable in this build.")
                 }
                 else -> error("Unknown fixture case")
             }
-            val evidence = if (case == "bundled") "bundled_key=false byok_gate=blocked" else
+            val evidence = if (case == "bundled") "provider_fields=false translation_gate=blocked" else
                 "preferences=true private_file=true encrypted_marker=true voice_credential=true"
             result.putString("stream", "PASS case=$case $evidence\n")
             finish(-1, result)
