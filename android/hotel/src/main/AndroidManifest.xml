@@ -16,6 +16,7 @@
         </activity>
         <activity android:name=".KeyEntryActivity" android:exported="false" android:launchMode="singleTop" android:screenOrientation="landscape"/>
         <activity android:name=".DiagnosticsActivity" android:exported="false" android:screenOrientation="landscape"/>
+        <activity android:name=".FleetSetupActivity" android:exported="false" android:screenOrientation="landscape"/>
         <provider android:name=".UpdateApkProvider" android:authorities="dev.orange.hotel.update" android:exported="false" android:grantUriPermissions="true"/>
     </application>
 </manifest>

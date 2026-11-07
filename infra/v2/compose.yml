@@ -1,0 +1,63 @@
+name: manzanilla-control
+
+x-runtime: &runtime
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  api:
+    <<: *runtime
+    image: ${MANZ_CONTROL_IMAGE:?Set an approved immutable control image}
+    env_file: ${MANZ_ENV_FILE:?Set the protected absolute application env-file path}
+    ports:
+      - 127.0.0.1:8080:8080
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+
+  worker:
+    <<: *runtime
+    image: ${MANZ_CONTROL_IMAGE:?Set an approved immutable control image}
+    command: [python, -m, control.worker]
+    env_file: ${MANZ_ENV_FILE:?Set the protected absolute application env-file path}
+    healthcheck:
+      test: [CMD, python, -m, control.worker, --healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      api:
+        condition: service_healthy
+
+  portal:
+    <<: *runtime
+    image: ${MANZ_PORTAL_IMAGE:?Set an approved immutable portal image}
+    environment:
+      MANZ_DOMAIN: ${MANZ_DOMAIN:?Set the actual owned hostname}
+    ports:
+      - 80:8080
+      - 443:8443
+      - 443:8443/udp
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

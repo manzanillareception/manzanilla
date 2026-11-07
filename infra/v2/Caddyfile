@@ -1,0 +1,36 @@
+{
+	http_port 8080
+	https_port 8443
+	admin off
+}
+
+{$MANZ_DOMAIN} {
+	# Access logging is deliberately not enabled: invite/recovery query tokens
+	# must not be copied into ordinary request logs.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "microphone=(), camera=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	}
+	@control path /api/v2/* /health/live /health/ready
+	handle @control {
+		reverse_proxy api:8080 {
+			# This direct ingress owns the client-IP trust boundary. Do not
+			# forward client-supplied values to the API's rate limiter.
+			header_up -Forwarded
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+	# Old privileged cloud/admin routes are not publicly proxied by this app.
+	handle /api/* {
+		respond "Not found" 404
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

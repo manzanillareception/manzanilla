@@ -1,0 +1,16 @@
+.git
+.env
+**/.env
+.venv
+node_modules
+**/node_modules
+work
+data
+**/*.db
+**/*.jks
+**/*.keystore
+**/local.properties
+**/build
+android
+ui
+licenses

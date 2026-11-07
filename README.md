@@ -10,6 +10,12 @@ Manzanilla Reception is a landscape Android app with two V1 voice modes:
 
 No Google account or admin portal is required for V1. Fish Audio is removed from active runtime paths. [V1 setup, credential scope, and limits](docs/v1-voice.md).
 
+**V2 development:** `test-branch` adds a separate hotel admin portal, managed
+accounts, PostgreSQL control backend and native device reporting. See the
+[implementation and verification record](docs/v2-implementation.md) and
+[deployment runbook](docs/v2-deployment.md). This source candidate is not a
+deployed backend or published APK.
+
 **17.0.44 source candidate:** the latest-release download below includes these changes only after its signed publication succeeds. This repair separates translation into centered response rows, moves update notices into a home-only bell, and fixes native audio startup buffering. [Repair scope and latency limits](docs/voice-experience-17.0.44.md). Physical tablet audio still requires device acceptance.
 
 <p align="center">

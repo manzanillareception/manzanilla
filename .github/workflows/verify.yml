@@ -17,7 +17,7 @@ jobs:
       - run: npm ci
       - run: npm run check:reception
       - run: node --test tests/*.test.cjs
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-control-dev.txt
       - run: python -m pytest tests -q
       - run: python -m unittest discover -s scripts -p 'test_provision_cartesia_v1.py' -v
       - run: python -m unittest discover -s scripts -p 'test_benchmark_openai_translation.py' -v
