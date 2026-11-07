@@ -10,7 +10,7 @@ Manzanilla Reception is a landscape Android app with two V1 voice modes:
 
 No Google account or admin portal is required for V1. Fish Audio is removed from active runtime paths. [V1 setup, credential scope, and limits](docs/v1-voice.md).
 
-**17.0.43 source candidate:** the latest-release download below includes these changes only after its signed publication succeeds. Physical tablet audio and OpenAI BYOK access still require device acceptance.
+**17.0.44 source candidate:** the latest-release download below includes these changes only after its signed publication succeeds. This repair separates translation into centered response rows, moves update notices into a home-only bell, and fixes native audio startup buffering. [Repair scope and latency limits](docs/voice-experience-17.0.44.md). Physical tablet audio still requires device acceptance.
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>

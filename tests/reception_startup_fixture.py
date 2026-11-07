@@ -55,6 +55,13 @@ def run_startup_fixture(browser, legacy_object_api=False):
         assert set(loaded) == paths, f"Packaged resources not loaded: {paths - set(loaded)}"
         assert page.evaluate("fixtureMessages.some(event => event.action === 'info')"), "Native startup handshake missing"
         assert page.locator('[data-action="translation"]').is_visible(), "Home did not render"
+        assert page.locator('#notifications-toggle').is_visible(), "The update bell belongs on home"
+        assert page.locator('#notifications-panel').is_hidden(), "Notifications stay closed until the bell is opened"
+        assert page.locator('#check-updates').is_hidden(), "Update controls belong inside the closed notification panel"
+        page.locator('#notifications-toggle').click()
+        assert page.locator('#notifications-panel').is_visible() and page.locator('#check-updates').is_visible()
+        page.locator('#notifications-close').click()
+        assert page.locator('#notifications-panel').is_hidden()
 
         def receive(event):
             page.evaluate("event => window.manzania.receive(event)", event)
@@ -62,6 +69,7 @@ def run_startup_fixture(browser, legacy_object_api=False):
         receive({"type": "reception_info", "translation_available": True, "reception_available": True, "openai_configured": True, "local_audio_state": "off", "staff_language": "en"})
         receive({"type": "language_preferences", "language": "en", "staff_language": "en"})
         page.locator('[data-action="translation"]').click()
+        assert page.locator('#notifications-toggle').is_hidden() and page.locator('#notifications-panel').is_hidden(), "Translation setup cannot show update notifications"
         assert page.locator('[data-action="start"]').is_disabled(), "Same-language start must be blocked"
         assert "two different languages" in page.locator("#translation-readiness").inner_text()
         assert page.locator('label[for="language"]').inner_text() == "Language 1"

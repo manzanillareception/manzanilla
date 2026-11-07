@@ -6,6 +6,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -20,7 +21,8 @@ class OpenAiTranslationTransport(
     client: OkHttpClient = DEFAULT_CLIENT,
     private val socketFactory: WebSocket.Factory = client,
     private val startupTimeoutMs: Long = 25_000,
-    private val closeTimeoutMs: Long = 3_000
+    private val closeTimeoutMs: Long = 3_000,
+    private val nanoTime: () -> Long = System::nanoTime
 ) : VoiceTransport {
     companion object {
         private val DEFAULT_CLIENT = OkHttpClient.Builder()
@@ -28,7 +30,9 @@ class OpenAiTranslationTransport(
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .pingInterval(20, TimeUnit.SECONDS)
             .build()
-        private const val MAX_UPLOAD_QUEUE_BYTES = 128_000L
+        // OkHttp counts encoded WebSocket bytes. This conservatively caps queued
+        // microphone audio at 300ms rather than allowing several seconds of lag.
+        private const val MAX_UPLOAD_QUEUE_BYTES = 16_000 * 2L * 4 / 3 * 300 / 1000
     }
 
     private enum class State { NEW, CONNECTING, STARTING, READY, CLOSING, CLOSED }
@@ -40,6 +44,13 @@ class OpenAiTranslationTransport(
     private var timer: ScheduledExecutorService? = null
     private var startupDeadline: ScheduledFuture<*>? = null
     private var closeDeadline: ScheduledFuture<*>? = null
+    private val transcript = OpenAiTranscriptSegments()
+    private var connectedAt = 0L
+    private var readyMs: Long? = null
+    private var firstInputAt: Long? = null
+    private var firstOutputMs: Long? = null
+    private var maximumUploadBytes = 0L
+    private var maximumDispatchMs = 0L
 
     override val inputSampleRate = OpenAiTranslationProtocol.SAMPLE_RATE
     override val outputSampleRate = OpenAiTranslationProtocol.SAMPLE_RATE
@@ -52,6 +63,7 @@ class OpenAiTranslationTransport(
             state = State.CONNECTING
             epoch = ++generation
             key = credential
+            connectedAt = nanoTime()
         }
         if (key.isBlank() || key.any(Char::isWhitespace)) {
             fail(epoch, "Enter your OpenAI API key in Translation setup.", false)
@@ -95,7 +107,12 @@ class OpenAiTranslationTransport(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
+                    val receivedAt = nanoTime()
                     receive(epoch, OpenAiTranslationProtocol.receive(text))
+                    synchronized(lock) {
+                        if (generation == epoch && state == State.READY)
+                            maximumDispatchMs = maxOf(maximumDispatchMs, elapsedMs(receivedAt))
+                    }
                 }
 
                 override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -141,12 +158,31 @@ class OpenAiTranslationTransport(
             OpenAiTranslationProtocol.Event.Started -> {
                 val ready = synchronized(lock) {
                     if (generation != epoch || state != State.STARTING) false
-                    else { state = State.READY; startupDeadline?.cancel(false); true }
+                    else {
+                        state = State.READY
+                        readyMs = elapsedMs(connectedAt)
+                        startupDeadline?.cancel(false)
+                        true
+                    }
                 }
-                if (ready) listener.onReady()
+                if (ready) { listener.onReady(); diagnostics(epoch) }
             }
-            is OpenAiTranslationProtocol.Event.Audio -> if (isReady(epoch)) listener.onAudio(event.pcm)
-            is OpenAiTranslationProtocol.Event.Transcript -> if (isReady(epoch)) listener.onTranscript(event.delta, false)
+            is OpenAiTranslationProtocol.Event.Audio -> if (isReady(epoch)) {
+                val first = synchronized(lock) {
+                    if (firstOutputMs == null && firstInputAt != null) {
+                        firstOutputMs = elapsedMs(firstInputAt!!)
+                        true
+                    } else false
+                }
+                listener.onAudio(event.pcm)
+                if (first) diagnostics(epoch)
+            }
+            is OpenAiTranslationProtocol.Event.Transcript -> {
+                val parts = synchronized(lock) {
+                    if (generation == epoch && state == State.READY) transcript.append(event) else emptyList()
+                }
+                parts.forEach { if (isReady(epoch)) deliver(it) }
+            }
             is OpenAiTranslationProtocol.Event.Failure -> fail(epoch, event.message, event.retryable)
             else -> Unit
         }
@@ -167,7 +203,12 @@ class OpenAiTranslationTransport(
         }
         val accepted = synchronized(lock) {
             if (generation != epoch || state != State.READY || socket !== target) null
-            else target.queueSize() <= MAX_UPLOAD_QUEUE_BYTES && target.send(event)
+            else {
+                val queued = target.queueSize()
+                maximumUploadBytes = maxOf(maximumUploadBytes, queued)
+                if (queued + event.length > MAX_UPLOAD_QUEUE_BYTES) false
+                else target.send(event).also { sent -> if (sent && firstInputAt == null) firstInputAt = nanoTime() }
+            }
         }
         if (accepted == false) {
             fail(epoch, "Audio upload fell behind. Check your network and retry translation.", true)
@@ -178,6 +219,7 @@ class OpenAiTranslationTransport(
         val epoch: Long
         val target: WebSocket?
         val graceful: Boolean
+        val final: OpenAiTranscriptSegments.Segment?
         synchronized(lock) {
             if (state == State.CLOSED || state == State.CLOSING) return
             epoch = generation
@@ -185,7 +227,9 @@ class OpenAiTranslationTransport(
             state = State.CLOSING
             startupDeadline?.cancel(false)
             target = socket
+            final = transcript.finish()
         }
+        final?.let(::deliver)
         if (!graceful || target == null) { finishClose(epoch); return }
         if (!target.send("{\"type\":\"session.close\"}")) { finishClose(epoch); return }
         synchronized(lock) {
@@ -197,6 +241,30 @@ class OpenAiTranslationTransport(
 
     private fun isReady(epoch: Long) = synchronized(lock) { generation == epoch && state == State.READY }
     private fun isClosing(epoch: Long) = synchronized(lock) { generation == epoch && state == State.CLOSING }
+
+    private fun deliver(part: OpenAiTranscriptSegments.Segment) = listener.onTranscriptSegment(
+        part.turnId, part.text, part.final, part.startMs, part.endMs)
+
+    private fun elapsedMs(from: Long) = ((nanoTime() - from).coerceAtLeast(0) / 1_000_000)
+
+    private fun diagnostics(epoch: Long) {
+        val metrics = synchronized(lock) {
+            if (generation != epoch || state != State.READY) return
+            JSONObject().put("provider", "OpenAI").put("model", OpenAiTranslationProtocol.MODEL)
+                .put("host", "api.openai.com").put("transport", "websocket")
+                .put("connection_ready_ms", readyMs)
+                .put("max_upload_queue_audio_ms", maximumUploadBytes * 3 / 4 * 1000 / (inputSampleRate * 2))
+                .put("max_local_receive_dispatch_ms", maximumDispatchMs)
+                .apply {
+                    firstOutputMs?.let { put("stream_start_to_first_output_event_ms", it) }
+                    // Output events can contain silence. This is a startup transport
+                    // observation, not speech-to-translation or inference latency.
+                    put("output_event_may_be_silent", true)
+                    put("startup_timing_scope", "input_stream_start_to_first_output_event")
+                }
+        }
+        listener.onDiagnostics(metrics)
+    }
 
     private fun finishClose(epoch: Long) {
         val target: WebSocket?
@@ -214,6 +282,7 @@ class OpenAiTranslationTransport(
 
     private fun fail(epoch: Long, message: String, retryable: Boolean, startupOnly: Boolean = false) {
         val target: WebSocket?
+        val final: OpenAiTranscriptSegments.Segment?
         synchronized(lock) {
             if (generation != epoch || state == State.CLOSED || state == State.CLOSING) return
             if (startupOnly && state != State.CONNECTING && state != State.STARTING) return
@@ -221,9 +290,11 @@ class OpenAiTranslationTransport(
             generation++
             credential = ""
             target = socket.also { socket = null }
+            final = transcript.finish()
             shutdownTimer()
         }
         target?.cancel()
+        final?.let(::deliver)
         listener.onError(message, retryable)
     }
 

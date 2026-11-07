@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.agentdeck.audio.PcmEnvelope
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** One native duplex owner. Permission and foreground/session ownership belong to the caller. */
@@ -28,9 +29,13 @@ class DuplexAudio(
     private val onPcm: (ByteArray) -> Unit,
     private val onLevel: (Float) -> Unit,
     private val onFailure: (String) -> Unit,
-    private val handset: Boolean = false
+    private val handset: Boolean = false,
+    private val onDiagnostics: (JSONObject) -> Unit = {}
 ) {
     companion object {
+        // A finite synthesized speech burst may arrive faster than it is spoken. This is a
+        // pending-speech ceiling, never a prefill target: the first frame is written immediately.
+        internal const val MAX_PLAYBACK_BURST_SECONDS = 8
         private val resourceLock = Any()
         private var resourceOwner: DuplexAudio? = null
 
@@ -45,7 +50,7 @@ class DuplexAudio(
     private val playbackLock = Any()
     private val failureReported = AtomicBoolean(false)
     private val cleanupStarted = AtomicBoolean(false)
-    private val playback = PcmPlaybackQueue(outputRate * 2)
+    private val playback = PcmPlaybackQueue(outputRate * 2 * MAX_PLAYBACK_BURST_SECONDS)
     private val envelope = PcmEnvelope()
     @Volatile private var running = false
     @Volatile private var closing = false
@@ -69,6 +74,10 @@ class DuplexAudio(
     private var communicationChanged = false
     private var inputDeviceId: Int? = null
     private var outputDeviceId: Int? = null
+    private var firstQueuedNanos = 0L
+    private var firstWriteNanos = 0L
+    private var firstPlaybackFrame = 0L
+    private var outputFramesWritten = 0L
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
@@ -88,6 +97,7 @@ class DuplexAudio(
     val isRunning: Boolean get() = running && !closing
 
     fun start() {
+        val startingNanos = System.nanoTime()
         try {
             synchronized(stateLock) {
                 check(!closed && !closing) { "This audio session has ended." }
@@ -124,13 +134,21 @@ class DuplexAudio(
                 check(recorder!!.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     "The microphone could not start. Check Android microphone permissions."
                 }
-                player!!.play()
-                running = true
+                synchronized(playbackLock) {
+                    check(!closing && !failureReported.get()) { "Audio setup was interrupted." }
+                    running = true
+                    player!!.play()
+                    // A focus-loss callback may race initialization without waiting on stateLock.
+                    if (failureReported.get()) { running = false; error("Audio setup was interrupted.") }
+                }
                 inputThread = Thread(::capture, "ManzanillaVoiceCapture").apply { isDaemon = true }
                 outputThread = Thread(::play, "ManzanillaVoicePlayout").apply { isDaemon = true }
                 inputThread!!.start()
                 outputThread!!.start()
             }
+            runCatching { onDiagnostics(JSONObject().put("stage", "native_audio_started")
+                .put("native_audio_start_ms", (System.nanoTime() - startingNanos) / 1_000_000L)
+                .put("input_sample_rate", inputRate).put("output_sample_rate", outputRate)) }
         } catch (failure: Exception) {
             stop()
             throw IllegalStateException(when (failure) {
@@ -191,11 +209,12 @@ class DuplexAudio(
         val track = AudioTrack.Builder().setAudioAttributes(attributes)
             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(outputRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-            .setBufferSizeInBytes(maxOf(minimum, outputRate / 50 * 2 * 3))
+            .setBufferSizeInBytes(maxOf(minimum, outputRate / 50 * 2 * 2))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY).build()
         player = track
         check(track.state == AudioTrack.STATE_INITIALIZED) { "The speaker could not initialize." }
+        if (Build.VERSION.SDK_INT >= 31) track.setStartThresholdInFrames(minOf(track.bufferSizeInFrames, outputRate / 50))
         val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         val target = if (handset) outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
             ?: outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
@@ -210,6 +229,7 @@ class DuplexAudio(
         val frame = ByteArray(inputRate / 50 * 2)
         var filled = 0
         try {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             while (running && !closing) {
                 val record = recorder ?: break
                 if (manager.mode == AudioManager.MODE_IN_CALL) error("phone call owns audio")
@@ -240,6 +260,7 @@ class DuplexAudio(
 
     private fun play() {
         try {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             while (running && !closing) {
                 val packet = playback.poll(20)
                 if (packet != null) {
@@ -256,7 +277,15 @@ class DuplexAudio(
                                         val actualOutput = track.routedDevice
                                         if (outputDeviceId != null && actualOutput != null && actualOutput.id != outputDeviceId)
                                             error("speaker route changed")
-                                        if (count > 0) envelope.written(packet.pcm, offset, count)
+                                        if (count > 0) {
+                                            if (firstWriteNanos == 0L) {
+                                                firstWriteNanos = System.nanoTime()
+                                                firstPlaybackFrame = outputFramesWritten + 1
+                                            }
+                                            outputFramesWritten += count / 2
+                                            envelope.written(packet.pcm, offset, count)
+                                            playback.consumed(packet, count)
+                                        }
                                         count
                                     }
                                 }
@@ -282,15 +311,34 @@ class DuplexAudio(
 
     private fun publishLevel() {
         val track = player ?: return
-        val heard = envelope.currentEnergy(track.playbackHeadPosition.toLong() and 0xffffffffL, SystemClock.elapsedRealtimeNanos())
+        var head = 0L
+        val timing = synchronized(playbackLock) {
+            head = track.playbackHeadPosition.toLong() and 0xffffffffL
+            if (firstPlaybackFrame > 0 && head >= firstPlaybackFrame) {
+                firstPlaybackFrame = 0
+                JSONObject().put("stage", "native_playback_head_started")
+                    .put("pcm_arrival_to_first_write_ms", (firstWriteNanos - firstQueuedNanos) / 1_000_000L)
+                    .put("pcm_arrival_to_playback_head_ms", (System.nanoTime() - firstQueuedNanos) / 1_000_000L)
+                    .put("queued_audio_ms", playback.pendingBytes().toLong() * 1000 / (outputRate * 2))
+            } else null
+        }
+        if (timing != null && running && !closing) runCatching { onDiagnostics(timing) }
+        val heard = envelope.currentEnergy(head, SystemClock.elapsedRealtimeNanos())
         val captured = if (SystemClock.elapsedRealtime() - lastInput < 100) inputLevel else 0f
         if (running && !closing) onLevel(maxOf(heard, captured).coerceIn(0f, 1f))
     }
 
     fun enqueue(pcm: ByteArray) {
-        if (pcm.isEmpty() || !running || closing) return
-        val accepted = synchronized(playbackLock) { !closing && running && playback.offer(pcm) }
-        if (!accepted && running && !closing) fail("Voice playback fell behind. Check the connection and restart the conversation.")
+        if (pcm.isEmpty() || closing || closed) return
+        // The same queue accepts startup PCM while route and microphone initialization run.
+        // It is also the only copy retained after the provider callback returns.
+        val accepted = synchronized(playbackLock) {
+            if (closing || closed || !playback.offer(pcm)) false else {
+                if (firstQueuedNanos == 0L) firstQueuedNanos = System.nanoTime()
+                true
+            }
+        }
+        if (!accepted && !closing && !closed) fail("Voice playback exceeded the bounded speech buffer. Please retry.")
     }
 
     /** The same lock fences both in-flight writes and the native buffer flush. */
@@ -299,6 +347,10 @@ class DuplexAudio(
             synchronized(playbackLock) {
                 playback.clear()
                 envelope.reset()
+                firstQueuedNanos = 0L
+                firstWriteNanos = 0L
+                firstPlaybackFrame = 0L
+                outputFramesWritten = 0L
                 player?.let { track ->
                     track.pause()
                     track.flush()
@@ -313,7 +365,8 @@ class DuplexAudio(
     private fun fail(message: String) {
         if (closing || closed || !failureReported.compareAndSet(false, true)) return
         running = false
-        runCatching { recorder?.stop() }
+        // Focus changes arrive on the main thread. Native stop/release belongs to the
+        // session worker; nonblocking capture exits on this flag without a driver call here.
         runCatching { onFailure(message) }
     }
 

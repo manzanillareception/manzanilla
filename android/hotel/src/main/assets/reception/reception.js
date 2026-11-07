@@ -53,16 +53,18 @@
   const localeLanguage = (navigator.language || "").slice(0, 2).toLowerCase();
   const firstLanguage = Object.keys(languages)[0];
   const initialGuest = hasOwn(languages, localeLanguage) ? localeLanguage : firstLanguage;
-  const state = { page: "idle", mode: "translation", night: false, language: initialGuest, staff_language: initialGuest, demo: !native, connected: false, audioAvailable: false, receptionAvailable: false, openaiConfigured: false, audioGate: "Add an OpenAI API key for live translation.", receptionGate: "Checking night receptionist setup…", audio: "off", active: false, phase: "", sessionId: "", generation: null, closed: true, terminated: true, error: "", metrics: "", utterances: /* @__PURE__ */ new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: "", pendingPage: "", micLevel: 0, liveText: "", assistantDraft: "", localSource: null };
+  const state = { page: "idle", mode: "translation", night: false, language: initialGuest, staff_language: initialGuest, demo: !native, connected: false, audioAvailable: false, receptionAvailable: false, openaiConfigured: false, audioGate: "Add an OpenAI API key for live translation.", receptionGate: "Checking night receptionist setup…", audio: "off", active: false, phase: "", sessionId: "", generation: null, closed: true, terminated: true, error: "", metrics: "", utterances: /* @__PURE__ */ new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: "", pendingPage: "", micLevel: 0, transcriptRows: [], currentTurnId: "", turnSequence: 0, retiredTurns: [], localSource: null, update: null, updateUnread: false, notificationsOpen: false };
   let queuedShortcut = "";
   const captionNodes = /* @__PURE__ */ new Map();
   const MAX_TRANSCRIPT = 12e3;
+  const MAX_TRANSCRIPT_ROWS = 80;
   const selected = { language: false, staff_language: false };
   let defaultReceived = false;
   let preferencesRestored = false;
   const icons = {
     arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>',
     translate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h12M9 2v3m3 0c-.5 5-3.5 8-8 10m1-8c1.5 3 4.2 5.7 7 7m1 7 4-11 4 11m-6.4-4h4.8"/></svg>',
+    voice: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M7 3h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4h-3l-4 3v-3H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z"/><path d="M7 10v3m3-6v9m4-7v5m3-4v3"/></svg>',
     bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 17h18M5 17v-3a7 7 0 0 1 14 0v3M2 21h20M12 4v3m-2-3h4"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>',
     bed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 18v3m18-3v3M3 11V5h18v6M2 18v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5H2Zm4-7V8h5v3m2 0V8h5v3"/></svg>',
@@ -131,29 +133,81 @@
     target.appendChild(document.createTextNode(" "));
     target.appendChild(link);
   }
-  const streamText = () => [state.liveText, state.assistantDraft].filter(Boolean).join("\n\n").slice(-MAX_TRANSCRIPT);
-  const streamHtml = () => '<article class="live-transcript" aria-atomic="true" '.concat(streamText() ? "" : "hidden", '><p class="live-transcript-text" dir="auto">').concat(esc(streamText()), "</p></article>");
-  function receiveStream(event) {
-    var _a;
-    if (typeof event.text !== "string") return;
-    if (event.type === "translation_text") {
-      state.liveText = (state.liveText + event.text).slice(-MAX_TRANSCRIPT);
-    } else if (event.final === true) {
-      state.assistantDraft = event.text.slice(-MAX_TRANSCRIPT);
-      state.liveText = streamText();
-      state.assistantDraft = "";
-    } else {
-      state.assistantDraft = (state.assistantDraft + event.text).slice(-MAX_TRANSCRIPT);
+  const streamText = () => state.transcriptRows.map((row) => row.text).join("\n\n");
+  const streamHtml = () => '<article class="live-transcript" '.concat(state.transcriptRows.length ? "" : "hidden", ">").concat(state.transcriptRows.map((row) => '<p class="live-transcript-text" data-turn-id="'.concat(esc(row.id), '" data-row-key="').concat(esc(row.key), '" data-final="').concat(row.final, '" dir="auto">').concat(esc(row.text), "</p>")).join(""), "</article>");
+  function retireRow(row) {
+    state.retiredTurns.push(row.key);
+    if (state.retiredTurns.length > 256) state.retiredTurns.shift();
+  }
+  function trimTranscript() {
+    while (state.transcriptRows.length > MAX_TRANSCRIPT_ROWS) retireRow(state.transcriptRows.shift());
+    let excess = streamText().length - MAX_TRANSCRIPT;
+    while (excess > 0 && state.transcriptRows.length) {
+      const first = state.transcriptRows[0];
+      if (state.transcriptRows.length > 1 && first.text.length <= excess) {
+        excess -= first.text.length + 2;
+        retireRow(state.transcriptRows.shift());
+      } else {
+        first.text = first.text.slice(excess);
+        excess = 0;
+      }
     }
+  }
+  function syncTranscript() {
+    var _a;
     const transcript = content.querySelector(".conversation");
-    const paragraph = transcript == null ? void 0 : transcript.querySelector(".live-transcript-text");
-    if (!paragraph) return;
+    const box = transcript == null ? void 0 : transcript.querySelector(".live-transcript");
+    if (!box) return;
     const scroller = transcript.closest(".session-scroll");
     const follow = scroller && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 60;
-    paragraph.textContent = streamText();
-    paragraph.parentElement.hidden = !paragraph.textContent;
-    if (paragraph.textContent) (_a = transcript.querySelector(".empty-transcript")) == null ? void 0 : _a.remove();
+    const nodes = new Map([...box.querySelectorAll("[data-row-key]")].map((node) => [node.dataset.rowKey, node]));
+    const currentKeys = new Set(state.transcriptRows.map((row) => row.key));
+    nodes.forEach((node, key) => {
+      if (!currentKeys.has(key)) node.remove();
+    });
+    state.transcriptRows.forEach((row) => {
+      let paragraph = nodes.get(row.key);
+      if (!paragraph) {
+        paragraph = document.createElement("p");
+        paragraph.className = "live-transcript-text";
+        paragraph.dataset.turnId = row.id;
+        paragraph.dataset.rowKey = row.key;
+        paragraph.dir = "auto";
+        box.appendChild(paragraph);
+      }
+      if (paragraph.textContent !== row.text) paragraph.textContent = row.text;
+      paragraph.dataset.final = String(row.final);
+    });
+    box.hidden = !state.transcriptRows.length;
+    if (state.transcriptRows.length) (_a = transcript.querySelector(".empty-transcript")) == null ? void 0 : _a.remove();
     if (follow) scroller.scrollTop = scroller.scrollHeight;
+  }
+  function receiveStream(event) {
+    if (typeof event.text !== "string" || event.operation !== void 0 && !["append", "replace"].includes(event.operation)) return;
+    const explicitId = event.turn_id === void 0 ? event.segment_id : event.turn_id;
+    if (explicitId !== void 0 && (typeof explicitId !== "string" || !explicitId || explicitId.length > 200)) return;
+    let id = explicitId || state.currentTurnId;
+    if (!id) {
+      if (!event.text) return;
+      id = "legacy-" + ++state.turnSequence;
+      state.currentTurnId = id;
+    }
+    const key = JSON.stringify([state.sessionId, id]);
+    if (state.retiredTurns.includes(key)) return;
+    let row = state.transcriptRows.find((item) => item.key === key);
+    if (row == null ? void 0 : row.final) return;
+    if (!row) {
+      if (!event.text) return;
+      row = { id, key, text: "", final: false };
+      state.transcriptRows.push(row);
+    }
+    const replace = event.operation === "replace" || event.operation === void 0 && event.type === "assistant_text" && event.final === true;
+    if (replace && event.text) row.text = event.text;
+    else if (!replace) row.text += event.text;
+    row.final = event.final === true;
+    if (row.final && state.currentTurnId === id) state.currentTurnId = "";
+    trimTranscript();
+    syncTranscript();
   }
   const conversation = () => {
     const hint = state.mode === "translation" ? "Speak naturally. Translation appears here." : "Ask the night receptionist about your stay or nearby places.";
@@ -198,7 +252,7 @@
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === "off";
     const indicator = stopped ? '<div class="session-icon" role="img" aria-label="Night receptionist">'.concat(icons.bell, "</div>") : voiceBall("reception-mic");
-    return '<div class="session-actions" data-stopped="'.concat(stopped, '"><div class="session-control">').concat(indicator, '<div class="session-control-copy"><strong>').concat(esc(stopped ? state.phase === "ending" ? "Stopping…" : "Stopped" : phaseLabel()), "</strong><span>").concat(esc(sessionAudioText()), "</span></div></div>").concat(!stopped ? action("message", "Message staff", "secondary", ["connecting", "reconnecting", "greeting"].includes(state.phase)) : "").concat(action(restart ? "restart" : "stop", restart ? "Restart" : stopped ? "Releasing…" : "Stop", "stop", stopped && !restart), "</div>");
+    return '<div class="session-actions assistant-controls" data-stopped="'.concat(stopped, '"><div class="session-control">').concat(indicator, '<div class="session-control-copy"><strong>').concat(esc(stopped ? state.phase === "ending" ? "Stopping…" : "Stopped" : phaseLabel()), "</strong><span>").concat(esc(sessionAudioText()), "</span></div></div>").concat(!stopped ? action("message", "Message staff", "secondary", ["connecting", "reconnecting", "greeting"].includes(state.phase)) : "").concat(action(restart ? "restart" : "stop", restart ? "Talk again" : stopped ? "Finishing…" : "End conversation", "stop", stopped && !restart), "</div>");
   };
   function syncMic() {
     const button = content.querySelector(".voice-ball");
@@ -224,6 +278,8 @@
     var _a, _b, _c, _d, _e;
     document.documentElement.dataset.appearance = appearance;
     document.documentElement.dataset.translation = state.page === "active" && state.mode === "translation" ? "live" : "";
+    document.documentElement.dataset.voice = state.page === "active" ? state.mode : "";
+    content.dataset.mode = state.mode;
     document.documentElement.lang = ["idle", "languages", "translation_languages"].includes(state.page) ? "en" : state.language;
     document.documentElement.dataset.night = String(state.night);
     document.documentElement.dataset.page = state.page;
@@ -236,19 +292,18 @@
     document.getElementById("settings").hidden = !native || !["idle", "error", "translation_languages"].includes(state.page);
     document.getElementById("settings").setAttribute("aria-label", state.mode === "translation" ? "OpenAI translation key" : "Night receptionist setup");
     document.getElementById("settings").title = state.mode === "translation" ? "OpenAI translation key" : "Night receptionist setup";
-    document.getElementById("check-updates").hidden = !native || state.page !== "idle";
     content.dataset.page = state.page;
     document.getElementById("mode-title").textContent = state.night ? "After-hours reception" : "Reception";
     document.getElementById("connection-text").textContent = state.receptionAvailable ? "Night receptionist ready" : state.connected ? "Hotel connected" : "Night setup needed";
     document.getElementById("hotel-label").textContent = state.hotel || "Hotel reception";
     document.getElementById("privacy").innerHTML = '<span class="mic-dot'.concat(state.audio === "recording" ? " mic-live" : "", '"></span>').concat(esc(sessionAudioText()));
     document.getElementById("hardware-hint").textContent = state.active ? "Green or red to stop" : state.page === "translation_languages" ? "Digits: first ten · " + (state.audioAvailable ? "Green: start · " : "Audio unavailable · ") + "Red: back" : state.night ? "Green: hotel assistance" : "Green: translation";
-    const homeAction = (name, icon, label, note = "") => '<button class="home-action'.concat(name === (state.night ? "reception" : "translation") ? " home-action-main" : "", '" data-action="').concat(name, '">').concat(name === (state.night ? "reception" : "translation") ? '<span class="orb">' + icons.arrow + "</span>" : icon, "<span>").concat(label, "</span>").concat(note ? "<small>" + note + "</small>" : "", "</button>");
+    const homeAction = (name, icon, label, note = "") => '<button class="home-action'.concat(name === (state.night ? "reception" : "translation") ? " home-action-main" : "", '" data-action="').concat(name, '">').concat(name === (state.night ? "reception" : "translation") ? '<span class="orb">' + (name === "reception" ? icons.voice : icons.arrow) + "</span>" : icon, "<span>").concat(label, "</span>").concat(note ? "<small>" + note + "</small>" : "", "</button>");
     const html = {
-      idle: () => '<div class="welcome"><h1>Welcome.</h1><p>'.concat(state.night ? "Self-service hotel assistance." : "Live translation and a night receptionist.", '</p></div><nav class="home-actions" aria-label="Reception services">').concat(state.night ? homeAction("reception", icons.bell, "Night receptionist", "Ask about your stay") + homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") : homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") + homeAction("reception", icons.bell, "Night receptionist")).concat(homeAction("request:checkin", icons.bed, "Arrival guide")).concat(homeAction("request:taxi", icons.car, "Taxi request")).concat(homeAction("request:message", icons.message, "Message staff"), '</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ').concat(appearance === "dark" ? "day" : "night", ' mode" title="Day / night mode · keypad 1">').concat(themeIcon(), "</button></div>"),
-      languages: () => '<div class="status-line"><div><h2 class="language-heading">Night receptionist</h2></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><label class="assist-label" for="assist-language">Language</label><select id="assist-language" class="assist-language" lang="').concat(state.language, '" dir="').concat(languageDir(state.language), '">').concat(Object.entries(languages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state.language === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), '</select><p class="setup-feedback" role="status">').concat(esc(state.receptionAvailable ? "Ready. Start to talk with the night receptionist." : state.receptionGate), "</p>").concat(action("assist-go", "Start night receptionist", "primary assist-go", !state.receptionAvailable || state.audio !== "off"), '<div class="button-row setup-options">').concat(action("night_setup", "Hotel and nearby places", "secondary")).concat(action("request_location", "Use device location", "secondary"), "</div>"),
+      idle: () => '<div class="welcome"><h1>Welcome.</h1><p>'.concat(state.night ? "Self-service hotel assistance." : "Live translation and a night receptionist.", '</p></div><nav class="home-actions" aria-label="Reception services">').concat(state.night ? homeAction("reception", icons.voice, "Night receptionist", "Ask about your stay") + homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") : homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") + homeAction("reception", icons.voice, "Night receptionist")).concat(homeAction("request:checkin", icons.bed, "Arrival guide")).concat(homeAction("request:taxi", icons.car, "Taxi request")).concat(homeAction("request:message", icons.message, "Message staff"), '</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ').concat(appearance === "dark" ? "day" : "night", ' mode" title="Day / night mode · keypad 1">').concat(themeIcon(), "</button></div>"),
+      languages: () => '<div class="status-line"><div class="assistant-heading"><span class="assistant-mark" aria-hidden="true">'.concat(icons.voice, '</span><div><h2 class="language-heading">Night receptionist</h2><p class="assistant-kicker">Voice help, whenever you need it</p></div></div><button class="back" data-action="back">').concat(icons.back, 'Back</button></div><p class="assistant-intro">Ask about your stay, arrival instructions, or places nearby. Just start talking.</p><label class="assist-label" for="assist-language">Your language</label><select id="assist-language" class="assist-language" lang="').concat(state.language, '" dir="').concat(languageDir(state.language), '">').concat(Object.entries(languages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state.language === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), '</select><p class="setup-feedback" role="status">').concat(esc(state.receptionAvailable ? "Ready when you are. The microphone starts with your conversation." : state.receptionGate), "</p>").concat(action("assist-go", '<span class="assistant-start-icon">'.concat(icons.mic, "</span>Talk to the night receptionist"), "primary assist-go", !state.receptionAvailable || state.audio !== "off"), '<div class="button-row setup-options">').concat(action("night_setup", "Hotel and nearby places", "secondary")).concat(action("request_location", "Use device location", "secondary"), "</div>"),
       translation_languages: () => '<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">One shared conversation</p></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="language-pair">').concat(languagePicker("language", "Language 1")).concat(languagePicker("staff_language", "Language 2"), '</div><p id="translation-readiness" class="setup-feedback" role="status">').concat(esc(translationReadiness()), '</p><button type="button" class="primary setup-start" data-action="start" aria-describedby="translation-readiness" ').concat(!state.audioAvailable || state.audio !== "off" || sameLanguage() ? "disabled" : "", ">Start translation</button>").concat(!state.openaiConfigured ? action("setup-translation", "Add OpenAI API key", "secondary setup-key", state.audio !== "off") : ""),
-      active: () => state.mode === "translation" ? '<button class="translate-back" data-action="back" aria-label="Back">'.concat(icons.back, '</button><p class="pair-title">').concat(esc(langName(state.language)), " ↔ ").concat(esc(langName(state.staff_language)), '</p><p class="translation-status" role="status" ').concat(state.phase === "reconnecting" ? "" : "hidden", ">").concat(esc(phaseLabel()), '</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div></div>").concat(sessionDock()) : '<div class="status-line session-top"><div><h2>Night receptionist</h2><p>'.concat(esc(phaseLabel()), '</p></div><button class="back" data-action="back">').concat(icons.back, "Back</button></div>").concat(state.error ? '<div class="notice error">'.concat(esc(state.error), "</div>") : "", '<div class="session-scroll">').concat(!state.closed ? '<div class="shortcut-list">'.concat(shortcuts.map((id, i) => action(id, '<span class="key">'.concat(i + 1, "</span><strong>").concat(esc(concierge()[i]), "</strong>"), "choice shortcut", ["connecting", "reconnecting", "greeting"].includes(state.phase))).join(""), "</div>") : "", '<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div>").concat(state.metrics ? '<p class="metrics">'.concat(esc(state.metrics), "</p>") : "", "</div>").concat(sessionDock()),
+      active: () => state.mode === "translation" ? '<button class="translate-back" data-action="back" aria-label="Back">'.concat(icons.back, '</button><p class="pair-title">').concat(esc(langName(state.language)), " ↔ ").concat(esc(langName(state.staff_language)), '</p><p class="translation-status" role="status" ').concat(state.phase === "reconnecting" ? "" : "hidden", ">").concat(esc(phaseLabel()), '</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div></div>").concat(sessionDock()) : '<div class="status-line session-top"><div class="assistant-heading"><span class="assistant-mark" aria-hidden="true">'.concat(icons.voice, "</span><div><h2>Night receptionist</h2><p>").concat(esc(phaseLabel()), '</p></div></div><button class="back" data-action="back">').concat(icons.back, "Back</button></div>").concat(state.error ? '<div class="notice error">'.concat(esc(state.error), "</div>") : "", '<div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div>").concat(state.metrics ? '<p class="metrics">'.concat(esc(state.metrics), "</p>") : "", "</div>").concat(!state.closed ? '<div class="shortcut-list assistant-suggestions" aria-label="Things you can ask">'.concat(shortcuts.map((id, i) => action(id, "".concat([icons.bed, icons.message, icons.car, icons.voice][i], "<strong>").concat(esc(concierge()[i]), "</strong>"), "choice shortcut", ["connecting", "reconnecting", "greeting"].includes(state.phase))).join(""), "</div>") : "").concat(sessionDock()),
       operation_form: () => {
         var _a2, _b2, _c2, _d2, _e2, _f, _g;
         return '<div class="status-line"><h2>'.concat(esc(((_a2 = state.operation) == null ? void 0 : _a2.action) === "message" ? "Message staff" : concierge()[shortcuts.indexOf((_b2 = state.operation) == null ? void 0 : _b2.action)] || "Hotel request"), '</h2><button class="back" data-action="back">').concat(icons.back, 'Back</button></div><form id="operation-form" class="operation-form" aria-busy="').concat(!!((_c2 = state.operation) == null ? void 0 : _c2.pending), '">').concat((((_d2 = state.operation) == null ? void 0 : _d2.fields) || []).map(operationField).join(""), '<div class="button-row"><button type="submit" class="primary" ').concat(((_e2 = state.operation) == null ? void 0 : _e2.pending) ? "disabled" : "", ">").concat(((_f = state.operation) == null ? void 0 : _f.pending) ? "Reviewing…" : "Review", "</button>").concat(action("cancel-operation", esc(t().cancel), "secondary", (_g = state.operation) == null ? void 0 : _g.pending), "</div></form>").concat(action("stop", "End", "stop"));
@@ -287,6 +342,7 @@
       if (input && focusedInput.start !== null) input.setSelectionRange(focusedInput.start, focusedInput.end);
     }
     renderNotices();
+    renderNotifications();
   }
   function activity() {
     send("activity");
@@ -336,8 +392,10 @@
   function clearGuest() {
     state.utterances.clear();
     captionNodes.clear();
-    state.liveText = "";
-    state.assistantDraft = "";
+    state.transcriptRows = [];
+    state.currentTurnId = "";
+    state.turnSequence = 0;
+    state.retiredTurns = [];
     state.localSource = null;
     const transcript = content.querySelector(".conversation");
     if (transcript) transcript.innerHTML = conversation();
@@ -383,9 +441,11 @@
     }
     silence();
     if (!restart) clearGuest();
-    else if (state.assistantDraft) {
-      state.liveText = streamText();
-      state.assistantDraft = "";
+    else {
+      state.transcriptRows.forEach((row) => {
+        row.final = true;
+      });
+      state.currentTurnId = "";
     }
     state.pendingPage = "";
     state.micLevel = 0;
@@ -625,7 +685,27 @@
   });
   document.getElementById("night-toggle").addEventListener("click", toggleNight);
   document.getElementById("settings").addEventListener("click", () => send(state.mode === "translation" ? "voice_setup" : "night_setup"));
-  document.getElementById("check-updates").addEventListener("click", () => send("check_updates"));
+  document.getElementById("notifications-toggle").addEventListener("click", () => {
+    if (state.page !== "idle") return;
+    state.notificationsOpen = !state.notificationsOpen;
+    if (state.notificationsOpen) state.updateUnread = false;
+    renderNotifications();
+  });
+  document.getElementById("notifications-close").addEventListener("click", () => {
+    state.notificationsOpen = false;
+    renderNotifications();
+  });
+  document.getElementById("check-updates").addEventListener("click", () => {
+    if (state.page === "idle" && state.notificationsOpen) send("check_updates");
+  });
+  document.getElementById("update-notification").addEventListener("click", () => {
+    if (state.page !== "idle" || !state.notificationsOpen || !state.update || ["checking", "progress", "installing", "installed"].includes(state.update.phase)) return;
+    const action2 = state.update.phase === "current" ? "check_updates" : "apply_update";
+    state.update.phase = action2 === "check_updates" ? "checking" : "installing";
+    state.update.text = "";
+    renderNotifications();
+    send(action2);
+  });
   function hardware(key) {
     activity();
     if (state.page === "translation_languages" && /^[0-9]$/.test(key)) {
@@ -651,40 +731,43 @@
     else if (state.page === "idle" && key === "2") chooseMode("reception");
     else if (state.page === "active" && state.mode === "reception" && /^[1-4]$/.test(key)) chooseShortcut(shortcuts[Number(key) - 1]);
   }
+  function renderNotifications() {
+    const home = native && state.page === "idle";
+    if (!home) state.notificationsOpen = false;
+    const toggle = document.getElementById("notifications-toggle");
+    const panel = document.getElementById("notifications-panel");
+    toggle.hidden = !home;
+    toggle.dataset.unread = String(state.updateUnread);
+    toggle.setAttribute("aria-expanded", String(home && state.notificationsOpen));
+    toggle.setAttribute("aria-label", state.updateUnread ? "Notifications, new update" : "Notifications");
+    panel.hidden = !home || !state.notificationsOpen;
+    const update = state.update;
+    const card = document.getElementById("update-notification");
+    const busy = update && ["checking", "progress", "installing"].includes(update.phase);
+    card.hidden = !update;
+    card.disabled = !!busy || (update == null ? void 0 : update.phase) === "installed";
+    if (update) {
+      card.dataset.phase = update.phase;
+      const defaults = {
+        checking: "Checking for updates…",
+        progress: "Downloading update…",
+        installing: "Opening installer…",
+        current: "You are up to date.",
+        confirm: "Update downloaded. Tap to open the installer.",
+        failed: "Update did not finish. Tap to try again.",
+        installed: "Update installed."
+      };
+      const label = update.text || defaults[update.phase] || "Update " + update.version + " is ready. Tap to install.";
+      const known = Number.isFinite(update.percent) && update.percent >= 0;
+      card.innerHTML = "<strong>".concat(esc(update.version ? "Version " + update.version : "App update"), "</strong><span>").concat(esc(label), "</span>").concat(busy ? '<span class="track"><span class="fill" style="width:'.concat(known ? Math.min(100, update.percent) : 0, '%"></span></span>') : "");
+    }
+    document.getElementById("notifications-empty").hidden = !!update;
+    document.getElementById("check-updates").disabled = !!busy;
+  }
   function offerUpdate(version, text, phase, percent) {
-    let bar = document.getElementById("update-offer");
-    if (!bar) {
-      bar = document.createElement("button");
-      bar.id = "update-offer";
-      bar.type = "button";
-      bar.className = "update-offer";
-      bar.addEventListener("click", () => {
-        if (["checking", "progress", "installing"].includes(bar.dataset.phase)) return;
-        const action2 = bar.dataset.phase === "current" ? "check_updates" : "apply_update";
-        bar.dataset.phase = action2 === "check_updates" ? "checking" : "installing";
-        send(action2);
-      });
-      document.body.appendChild(bar);
-    }
-    phase = phase || "ready";
-    bar.dataset.phase = phase;
-    if (phase === "installed") {
-      bar.hidden = true;
-      return;
-    }
-    bar.hidden = false;
-    if (["checking", "progress", "installing"].includes(phase)) {
-      bar.disabled = true;
-      const pct = Number(percent);
-      const known = Number.isFinite(pct) && pct >= 0;
-      bar.innerHTML = "".concat(esc(text || "Downloading…"), '<span class="track"><span class="fill" style="width:').concat(known ? Math.min(100, pct) : 0, '%"></span></span>');
-      return;
-    }
-    bar.disabled = false;
-    if (phase === "current") bar.textContent = text || "Up to date. Tap to check again.";
-    else if (phase === "confirm") bar.textContent = text || "Tap to open the installer. The file is already downloaded.";
-    else if (phase === "failed") bar.textContent = text || "Update did not finish. Tap to try the installer again.";
-    else bar.textContent = text || "Update " + version + " is downloaded. Tap to install.";
+    state.update = { version, text: text || "", phase: phase || "ready", percent: Number(percent) };
+    if (!state.notificationsOpen && !["checking", "progress", "installing", "current", "installed"].includes(state.update.phase)) state.updateUnread = true;
+    renderNotifications();
   }
   function matchesSession(event) {
     if (!state.sessionId || event.session_id !== state.sessionId || !Number.isInteger(event.generation) || event.generation < 0) return false;
@@ -965,7 +1048,11 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      hardware("back");
+      if (state.notificationsOpen) {
+        state.notificationsOpen = false;
+        renderNotifications();
+        document.getElementById("notifications-toggle").focus();
+      } else hardware("back");
       return;
     }
     if (event.target.matches("input,textarea")) return;

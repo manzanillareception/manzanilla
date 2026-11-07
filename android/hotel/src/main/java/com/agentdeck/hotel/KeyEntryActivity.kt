@@ -173,6 +173,9 @@ class KeyEntryActivity : Activity() {
             column.addView(button("Night receptionist setup") {
                 startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("night_only", true))
             })
+            column.addView(button("Connection diagnostics") {
+                startActivity(Intent(this, DiagnosticsActivity::class.java))
+            })
             column.addView(button("Done") { finish() })
             setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
             return

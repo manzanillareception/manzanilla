@@ -13,7 +13,7 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Private test-build screen: shows the in-memory voice timing timeline and lets
+ * Device-local read-only screen: shows the in-memory voice timing timeline and lets
  * staff export it as text. Timestamps and endpoint names only; no speech content.
  */
 class DiagnosticsActivity : Activity() {
@@ -63,7 +63,7 @@ class DiagnosticsActivity : Activity() {
         val text = VoiceDiagnostics.render()
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Voice diagnostics (test build)")
+            putExtra(Intent.EXTRA_SUBJECT, "Manzanilla connection diagnostics")
             putExtra(Intent.EXTRA_TEXT, text)
         }
         try {

@@ -1,54 +1,69 @@
 name: Build verified signed APK
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      openai_live_probe:
+        description: 'Run two bounded synthetic OpenAI-only voice latency trials using a temporary test secret'
+        type: boolean
+        default: false
   workflow_call: {}
 permissions:
   contents: read
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
-  cartesia-agent:
-    concurrency:
-      group: cartesia-v1-agent-provision
-      cancel-in-progress: false
+  openai-latency:
+    # Explicit manual opt-in only. This secret never enters any Android build job.
+    if: github.event_name == 'workflow_dispatch' && inputs.openai_live_probe
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      agent_id: ${{ steps.config.outputs.agent_id }}
+    concurrency:
+      group: openai-translation-benchmark
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - name: Configure and verify the dedicated Cartesia V1 agent
-        id: config
+      - run: python -m pip install 'websockets==15.0.1'
+      - name: Verify the bounded benchmark offline
+        run: python -m unittest discover -s scripts -p 'test_benchmark_openai_translation.py' -v
+      - name: Measure two synthetic OpenAI-only voice trials
         env:
-          CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install 'websockets>=14,<16'
-          mkdir -p "$RUNNER_TEMP/candidate"
-          if ! python scripts/provision_cartesia_v1.py --provision --probe-audio > "$RUNNER_TEMP/cartesia-readiness.json"; then
-            cat "$RUNNER_TEMP/cartesia-readiness.json"
-            exit 1
-          fi
-          python - <<'PYTHON'
-          import json, os, re
-          from pathlib import Path
-          result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "cartesia-readiness.json").read_text())
-          agent = result["agent_id"]
-          assert re.fullmatch(r"agent_[A-Za-z0-9_-]{1,128}", agent)
-          assert result["probe"]["status"] == "session_ready"
-          assert result["probe"]["synthetic_voice_status"] == "audio_and_tool_verified"
-          with open(os.environ["GITHUB_OUTPUT"], "a") as env:
-              env.write(f"agent_id={agent}\n")
-          print("Dedicated Cartesia agent verified; synthetic WebSocket session ready.")
-          PYTHON
-          cp "$RUNNER_TEMP/cartesia-readiness.json" "$RUNNER_TEMP/candidate/cartesia-readiness.json"
+          command -v ffmpeg
+          python scripts/benchmark_openai_translation.py \
+            --contract scripts/openai_translation_contract.json \
+            --output "$RUNNER_TEMP/openai-translation-benchmark.json" \
+            --run-provider-benchmark
+      - name: Retain sanitized OpenAI benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openai-translation-benchmark
+          path: ${{ runner.temp }}/openai-translation-benchmark.json
+          if-no-files-found: ignore
+  cartesia-agent:
+    # This repair is verified offline: the owner explicitly excluded Cartesia API tests.
+    runs-on: ubuntu-latest
+    outputs:
+      agent_id: ${{ steps.config.outputs.agent_id }}
+    steps:
+      - name: Use the existing Cartesia V1 agent without provider calls
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          agent_id='agent_ieQcM2k2FS1ckJL4X2yZqR'
+          printf 'agent_id=%s\n' "$agent_id" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/cartesia-config"
+          printf '{"agent_id":"%s","provider_tests":"not_run","reason":"owner_requested_offline_verification"}\n' "$agent_id" > "$RUNNER_TEMP/cartesia-config/cartesia-build-config.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: cartesia-v1-readiness
-          path: ${{ runner.temp }}/candidate/cartesia-readiness.json
+          name: cartesia-v1-build-config
+          path: ${{ runner.temp }}/cartesia-config/cartesia-build-config.json
           if-no-files-found: error
   signed-apk:
     needs: [verify, cartesia-agent]
@@ -78,7 +93,7 @@ jobs:
           printf '%s/build-tools/34.0.0\n' "$ANDROID_HOME" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@v4
         with:
-          name: cartesia-v1-readiness
+          name: cartesia-v1-build-config
           path: ${{ runner.temp }}/candidate
       - name: Build with existing pilot signing key
         env:

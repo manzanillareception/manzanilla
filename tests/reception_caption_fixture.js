@@ -53,20 +53,25 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
     return scope;
   };
   let scope = begin();
-  const stream = (text, extra = {}) => receive({ ...scope, type: 'translation_text', text, final: false, ...extra });
-  const transcript = () => doc.querySelector('.live-transcript-text');
+  const stream = (text, extra = {}) => receive({ ...scope, type: 'translation_text', turn_id: 'turn-1', operation: 'append', text, final: false, ...extra });
+  const rows = () => [...doc.querySelectorAll('.live-transcript-text')];
+  const transcript = () => rows().at(-1);
+  const row = id => rows().find(node => node.dataset.turnId === id);
+  const allText = () => rows().map(node => node.textContent).join('\n');
   const box = () => doc.querySelector('.live-transcript');
   const exact = '<img src=x onerror="throw Error(1)">\n  Exact words & punctuation.';
   stream(exact);
   const first = transcript();
-  assert(first && box(), 'A single centered transcript is rendered');
+  assert(first && box(), 'A centered response row is rendered');
   assert(first.textContent === exact && !box().querySelector('img'), 'Streamed text is exact and HTML-escaped');
   stream(' A second delta.');
   assert(transcript() === first && transcript().textContent === exact + ' A second delta.', 'Deltas append without replacing the text node');
-  assert(doc.querySelectorAll('.live-transcript').length === 1, 'One transcript box serves both directions');
+  assert(doc.querySelectorAll('.live-transcript').length === 1 && first.dataset.turnId === 'turn-1', 'One transcript container holds the explicitly identified response');
   assert(!box().querySelector('.caption-side,.caption-language,.caption-guest,.caption-reception'), 'The transcript has no speaker attribution or side markers');
   const textBeforeInvalid = first.textContent;
   stream({ unsafe: true });
+  stream('Invalid turn identity', { turn_id: { unsafe: true } });
+  stream('Invalid operation', { operation: 'arbitrary' });
   stream('Wrong generation', { generation: 2 });
   stream('Wrong session', { session_id: 'stale-session' });
   assert(transcript().textContent === textBeforeInvalid, 'Malformed, stale-session and stale-generation events cannot change output');
@@ -74,7 +79,7 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   const before = win.performance.now();
   for (let id = 0; id < 80; id++) stream(` Line ${id}.`);
   const replayMs = win.performance.now() - before;
-  assert(transcript() === first && doc.querySelectorAll('.live-transcript').length === 1, 'Many chunks stay in one existing transcript');
+  assert(transcript() === first && doc.querySelectorAll('.live-transcript').length === 1, 'Many chunks stay in the existing response row');
   const mic = doc.querySelector('.voice-ball');
   assert(mic && !mic.disabled, 'A live translation has an enabled mute control');
   mic.click();
@@ -94,23 +99,47 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   assert(transcript() === first, 'Reconnecting retains the live translation node');
   receive({ ...scope, type: 'reception_event', phase: 'listening' });
   assert(doc.querySelector('.translation-status').hidden, 'Listening clears the reconnecting status');
-  stream('x'.repeat(13000));
-  assert(transcript().textContent.length <= 12000 && transcript().textContent.endsWith('x'.repeat(32)), 'Continuous output is bounded while retaining the newest text');
-  const bounded = transcript().textContent;
+  const firstComplete = first.textContent;
+  stream('', { final: true });
+  stream('Late delta must not reappear.');
+  stream(firstComplete, { operation: 'replace', final: true });
+  assert(first.textContent === firstComplete && first.dataset.final === 'true', 'An empty final seals a response without erasing it or accepting late replay');
+  stream('Bonjour.', { turn_id: 'turn-2' });
+  assert(rows().length === 2 && row('turn-2').textContent === 'Bonjour.', 'A new response begins a distinct centered row');
+  const firstRect = first.getBoundingClientRect(), secondRect = row('turn-2').getBoundingClientRect();
+  assert(secondRect.top >= firstRect.bottom - 1, 'Successive responses occupy separate visual lines');
+  stream('Hello', { turn_id: 'turn-3' });
+  stream('Hola.', { turn_id: 'turn-4' });
+  stream(', world.', { turn_id: 'turn-3' });
+  assert(row('turn-3').textContent === 'Hello, world.' && row('turn-4').textContent === 'Hola.', 'Interleaved chunks update only their own response');
+  stream('Hello, world!', { turn_id: 'turn-3', operation: 'replace', final: true });
+  stream('Duplicate final', { turn_id: 'turn-3', operation: 'replace', final: true });
+  assert(row('turn-3').textContent === 'Hello, world!', 'A final replacement is exact once and rejects duplicate final replay');
+  stream('Segment alias.', { turn_id: undefined, segment_id: 'segment-1', final: true });
+  assert(row('segment-1')?.textContent === 'Segment alias.', 'Segment identifiers preserve the response boundary alias');
+  stream('x'.repeat(13000), { turn_id: 'long-response' });
+  assert(allText().replace(/\n/g, '').length <= 12000 && row('long-response').textContent.endsWith('x'.repeat(32)), 'Continuous output is bounded while retaining the newest text');
+  const bounded = allText();
   receive({ type: 'connection', connected: true });
-  assert(transcript().textContent === bounded, 'A full render preserves bounded stream output');
+  assert(allText() === bounded, 'A full render preserves bounded response rows');
+  for (let id = 0; id < 90; id++) stream(`Response ${id}.`, { turn_id: `bounded-${id}`, final: true });
+  assert(rows().length <= 80 && allText().replace(/\n/g, '').length <= 12000 && row('bounded-89')?.textContent === 'Response 89.', 'Response history bounds both row count and text while retaining the newest turn');
+  const prunedHistory = allText();
+  stream('Old response replay', { turn_id: 'bounded-0', final: true });
+  assert(allText() === prunedHistory && !row('bounded-0'), 'Pruned response identifiers cannot reappear from late replay');
 
   const oldScope = scope;
   receive({ type: 'visibility', visible: false });
   receive({ ...scope, type: 'audio_state', state: 'off' });
   receive({ type: 'language_preferences', language: 'fr', staff_language: 'de' });
   scope = begin();
-  const blank = transcript().textContent;
+  const blank = allText();
   receive({ ...oldScope, type: 'translation_text', text: 'Old output must not appear' });
-  assert(transcript().textContent === blank, 'Previous-session output is fenced after a new conversation');
-  stream('Bonjour.');
-  stream(' Guten Tag.', { final: true });
-  assert(transcript().textContent.includes('Bonjour.') && transcript().textContent.includes('Guten Tag.'), 'Both selected languages use the same text flow');
+  assert(allText() === blank, 'Previous-session output is fenced after a new conversation');
+  receive({ ...scope, type: 'translation_text', text: 'Bonjour.', final: false });
+  receive({ ...scope, type: 'translation_text', text: '', final: true });
+  receive({ ...scope, type: 'translation_text', text: 'Guten Tag.', final: true });
+  assert(rows().length === 2 && rows()[0].textContent === 'Bonjour.' && rows()[1].textContent === 'Guten Tag.', 'Legacy responses without identifiers still separate after an explicit final boundary');
 
   for (const [firstLanguage, secondLanguage] of [['fr', 'de'], ['ar', 'fa'], ['zh', 'ja'], ['ja', 'zh']]) {
     receive({ type: 'visibility', visible: false });
@@ -125,15 +154,20 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   }
 
   const originalSession = scope.session_id;
-  const visibleHistory = transcript().textContent;
+  const endedScope = scope;
+  const visibleHistory = allText();
   receive({ ...scope, type: 'reception_event', phase: 'error', text: 'Simulated service failure' });
   assert(!doc.querySelector('.voice-ball'), 'A stopped conversation has no nonfunctional mute button');
   assert(doc.querySelector('[data-action="restart"]')?.disabled, 'Retry waits until microphone release is confirmed');
   receive({ ...scope, type: 'audio_state', state: 'off' });
   click('[data-action="restart"]');
   const restarted = messages.filter(message => message.action === 'start').at(-1);
-  assert(restarted.session_id !== originalSession && transcript().textContent === visibleHistory, 'Manual retry starts a new session and preserves readable history');
+  assert(restarted.session_id !== originalSession && allText() === visibleHistory, 'Manual retry starts a new session and preserves readable history');
   scope = { session_id: restarted.session_id, generation: 1 };
+  receive({ ...scope, type: 'audio_state', state: 'recording' });
+  stream('New session response.', { final: true });
+  receive({ ...endedScope, type: 'translation_text', turn_id: 'turn-1', text: 'Stale retry output', final: true });
+  assert(rows().length === 2 && allText() === visibleHistory + '\nNew session response.', 'Retry scopes reused turn IDs to the new session while preserving prior rows and rejecting old output');
 
   receive({ type: 'visibility', visible: false });
   receive({ ...scope, type: 'audio_state', state: 'off' });
@@ -146,7 +180,7 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   const secondTurn = 'For a taxi, please ask staff until taxi booking is configured.';
   receive({ ...scope, type: 'assistant_text', text: 'For a taxi, ', final: false });
   receive({ ...scope, type: 'assistant_text', text: secondTurn, final: true });
-  const turns = transcript().textContent.split(/\n+/);
+  const turns = allText().split(/\n+/);
   assert(turns.length === 2 && turns[0] === firstTurn && turns[1] === secondTurn, 'Successive assistant turns remain separated without duplicating either draft');
   assert(doc.querySelectorAll('.live-transcript').length === 1 && !box().querySelector('.caption-side'), 'Night reception also uses one unlabelled centered stream');
   const receptionTranscript = transcript();
@@ -162,9 +196,9 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   assert(transcript() === receptionTranscript && receptionMic.getAttribute('aria-pressed') === 'false', 'Night reception mute changes preserve the live transcript');
   receive({ ...scope, type: 'energy', level: 0.4 });
   assert(receptionMic.style.getPropertyValue('--level') === '0.4', 'Native energy also updates the night-reception meter');
-  const receptionHistory = transcript().textContent;
+  const receptionHistory = allText();
   receive({ ...scope, type: 'reception_event', phase: 'reconnecting' });
-  assert(doc.querySelector('.session-top p').textContent === 'Reconnecting…' && transcript().textContent === receptionHistory, 'Night reception displays reconnecting and preserves text');
+  assert(doc.querySelector('.session-top p').textContent === 'Reconnecting…' && allText() === receptionHistory, 'Night reception displays reconnecting and preserves text');
   assert(doc.querySelector('[data-action="taxi"]').disabled, 'Night-reception shortcuts wait during reconnecting');
   receive({ ...scope, type: 'reception_event', phase: 'listening' });
   const sourceUrl = 'https://www.openstreetmap.org/node/123';
@@ -180,5 +214,5 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   receive({ ...scope, type: 'local_source', attribution: '<b>© OpenStreetMap contributors</b>', source_url: sourceUrl });
   assert(source.querySelector('span').textContent === '<b>© OpenStreetMap contributors</b>' && !source.querySelector('b'), 'Attribution is text rather than provider-supplied HTML');
   win.__lastScope = scope;
-  return { frame, replayMs, assertions: 'Centered delta output, escaping, bounds, microphone DOM stability, session fencing, language orientations and independent guest-reception output' };
+  return { frame, replayMs, assertions: 'Centered response boundaries, ID-local deltas, finality, escaping, history bounds, microphone DOM stability, session fencing, language orientations and independent reception output' };
 }

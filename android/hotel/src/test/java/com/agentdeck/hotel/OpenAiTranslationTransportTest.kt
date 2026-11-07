@@ -22,10 +22,17 @@ class OpenAiTranslationTransportTest {
         val text = Collections.synchronizedList(ArrayList<String>())
         val audio = Collections.synchronizedList(ArrayList<ByteArray>())
         val errors = Collections.synchronizedList(ArrayList<Pair<String, Boolean>>())
+        val segments = Collections.synchronizedList(ArrayList<OpenAiTranscriptSegments.Segment>())
+        val diagnostics = Collections.synchronizedList(ArrayList<JSONObject>())
         val failed = CountDownLatch(1)
         override fun onReady() { events.add("ready") }
         override fun onAudio(pcm: ByteArray) { audio.add(pcm.copyOf()) }
         override fun onTranscript(text: String, final: Boolean) { this.text.add(text) }
+        override fun onTranscriptSegment(turnId: String, text: String, final: Boolean, startMs: Long?, endMs: Long?) {
+            segments.add(OpenAiTranscriptSegments.Segment(turnId, text, final, startMs, endMs))
+            if (text.isNotEmpty()) onTranscript(text, final)
+        }
+        override fun onDiagnostics(metrics: JSONObject) { diagnostics.add(metrics) }
         override fun onInterrupted() { events.add("interrupted") }
         override fun onClosed() { events.add("closed") }
         override fun onError(message: String, retryable: Boolean) {
@@ -186,6 +193,63 @@ class OpenAiTranslationTransportTest {
             f.transport.sendAudio(byteArrayOf(1, 0))
             assertEquals(1, f.listener.errors.size)
         }
+    }
+
+    @Test fun subSecondUploadBacklogIsBoundedAndNoExtraMicrophoneBatchIsHeldLocally() {
+        Fixture().use { f ->
+            f.transport.connect(); f.factory.ready()
+            val pcm = ByteArray(640)
+            repeat(3) { f.transport.sendAudio(pcm) }
+            assertEquals(3, f.factory.socket.sent.count { JSONObject(it).optString("type") == "session.input_audio.append" })
+            f.factory.socket.queued = 13_000 // Less than half a second of encoded PCM.
+            f.transport.sendAudio(pcm)
+            assertTrue(f.listener.errors.single().second)
+        }
+    }
+
+    @Test fun timedRowsHaveStableIdsAndFinalEmptySealsBeforeNetworkError() {
+        Fixture().use { f ->
+            f.transport.connect(); f.factory.ready()
+            f.factory.receive("""{"type":"session.output_transcript.delta","delta":"Hello","start_ms":100,"end_ms":300,"event_id":"one"}""")
+            f.factory.receive("""{"type":"session.output_transcript.delta","delta":" there","start_ms":300,"end_ms":500,"event_id":"two"}""")
+            f.factory.receive("""{"type":"session.output_transcript.delta","delta":"Another answer","start_ms":2000,"end_ms":2200,"event_id":"three"}""")
+            val parts = f.listener.segments
+            assertEquals(parts[0].turnId, parts[1].turnId)
+            assertEquals(parts[0].turnId, parts[2].turnId)
+            assertTrue(parts[2].final)
+            assertEquals("", parts[2].text)
+            assertNotEquals(parts[0].turnId, parts[3].turnId)
+            f.factory.listener.onFailure(f.factory.socket, IOException("private"), null)
+            assertTrue(parts.last().final)
+            assertEquals(parts[3].turnId, parts.last().turnId)
+            assertEquals("", parts.last().text)
+        }
+    }
+
+    @Test fun diagnosticsIdentifyTheRealProviderWithoutCredentialsOrAClaimOfMeasuredInferenceLatency() {
+        var clock = 0L
+        val factory = FakeFactory()
+        val listener = RecordingListener()
+        val transport = OpenAiTranslationTransport("synthetic-fixture-key", "French", "Japanese", listener,
+            OkHttpClient(), factory, 25000, 100, nanoTime = { clock })
+        try {
+            transport.connect()
+            clock = 120_000_000
+            factory.ready()
+            transport.sendAudio(ByteArray(640))
+            clock = 570_000_000
+            factory.receive("""{"type":"session.output_audio.delta","delta":"AQA="}""")
+            val info = listener.diagnostics.last()
+            assertEquals("OpenAI", info.getString("provider"))
+            assertEquals("gpt-live-1", info.getString("model"))
+            assertEquals("api.openai.com", info.getString("host"))
+            assertEquals(120L, info.getLong("connection_ready_ms"))
+            assertEquals(450L, info.getLong("stream_start_to_first_output_event_ms"))
+            assertEquals("input_stream_start_to_first_output_event", info.getString("startup_timing_scope"))
+            assertTrue(info.getBoolean("output_event_may_be_silent"))
+            assertFalse(info.toString().contains("synthetic-fixture-key"))
+            assertEquals(1, listener.audio.size) // The receive call forwards PCM immediately.
+        } finally { transport.close(); factory.receive("""{"type":"session.closed"}""") }
     }
 
     @Test fun emptyCredentialsFailLocallyWithoutProviderAccess() {

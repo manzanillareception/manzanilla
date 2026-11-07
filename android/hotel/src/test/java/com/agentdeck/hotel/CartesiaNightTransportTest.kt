@@ -12,6 +12,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.io.Closeable
 import java.io.IOException
+import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -20,9 +21,10 @@ class CartesiaNightTransportTest {
         val events = ArrayList<String>()
         val errors = ArrayList<Pair<String, Boolean>>()
         val calls = ArrayList<String>()
+        val audio = ArrayList<ByteArray>()
         val failed = CountDownLatch(1)
         override fun onReady() { events.add("ready") }
-        override fun onAudio(pcm: ByteArray) { events.add("audio") }
+        override fun onAudio(pcm: ByteArray) { audio.add(pcm.copyOf()); events.add("audio") }
         override fun onTranscript(text: String, final: Boolean) { events.add("text") }
         override fun onInterrupted() { events.add("interrupted") }
         override fun onClosed() { events.add("closed") }
@@ -125,6 +127,25 @@ class CartesiaNightTransportTest {
             f.factory.receive(call)
             assertEquals(3, f.factory.socket.frames.size)
             assertEquals(listOf("location-1"), f.listener.calls)
+        }
+    }
+
+    @Test fun `immediate multi-second greeting is preserved and does not pause microphone input`() {
+        Fixture().use { f ->
+            f.transport.connect()
+            f.factory.open()
+            f.factory.receive("""{"type":"session_ready","audio":{"input_format":"pcm_16000","output_delivery":"speaking_pace"}}""")
+            val greeting = ByteArray(16000 * 2 * 3) { (it % 251).toByte() }
+            f.factory.receive(JSONObject().put("type", "audio_output")
+                .put("audio", Base64.getEncoder().encodeToString(greeting)).toString())
+            assertArrayEquals(greeting, f.listener.audio.single())
+            f.transport.sendAudio(ByteArray(640))
+            assertEquals("audio_input", JSONObject(f.factory.socket.frames.last()).getString("type"))
+            f.factory.receive("""{"type":"audio_output_clear"}""")
+            f.factory.receive("""{"type":"audio_output","audio":"BwA="}""")
+            assertEquals(listOf("ready", "audio", "interrupted", "audio"), f.listener.events)
+            assertArrayEquals(byteArrayOf(7, 0), f.listener.audio.last())
+            assertTrue(f.listener.errors.isEmpty())
         }
     }
 

@@ -24,7 +24,7 @@ secret. Debug builds keep `BuildConfig.CARTESIA_API_KEY` empty even when the
 release secret is present in the build environment.
 
 The exception does not apply to OpenAI. Its key must never enter BuildConfig,
-JavaScript, release assets, or CI configuration. The app's OpenAI key screen can
+JavaScript or release assets. A separately supplied temporary benchmark key may be used only in an explicitly requested CI latency test; it never enters Android build steps. The app's OpenAI key screen can
 save, replace, or remove the key through `SecretStore(context, "openai")`. The
 field stays masked, and the stored value is not displayed when setup reopens.
 The key is encrypted with the device Keystore and excluded from backup.
@@ -74,15 +74,17 @@ limitations. Full-duplex acoustic behavior, live provider availability,
 translation quality, latency, and physical tablet operation need separate
 measured acceptance; source tests and compilation do not establish those claims.
 
-## Verification candidate
+## Verification candidate (updated for 17.0.44)
 
 Local source verification passes: 194 Python tests, 21 Node tests, 13 offline
 agent-provision/probe tests, Android JVM tests, debug lint, release APK assembly
 and debug instrumentation assembly. The release assembled locally has no live
 Cartesia secret and is not the distributable signed APK.
 
-GitHub CI additionally runs the browser scenarios, Android runtime fixtures, a
-bounded synthetic Cartesia voice/tool exchange using the approved CI secret,
-and the same-signer retained-data upgrade. A provider handshake is separate from
+GitHub CI additionally runs the browser scenarios, Android runtime fixtures,
+and the same-signer retained-data upgrade. The 17.0.44 repair reuses the existing
+Cartesia agent and performs no Cartesia API calls, as requested by the owner.
+A manual OpenAI-only latency probe is separate from release builds and runs only
+with an explicitly supplied temporary test secret. A provider handshake is separate from
 physical tablet microphone/speaker acceptance. OpenAI live access is checked by
 the person supplying their own key on the device.
