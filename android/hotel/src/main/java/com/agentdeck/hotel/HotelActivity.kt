@@ -1,9 +1,7 @@
 package com.agentdeck.hotel
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.media.AudioManager
@@ -24,14 +22,13 @@ import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Native capture, credentials and gateway ownership; the packaged guest UI has none. */
+/** Owns staff-led gateway sessions and updates; the packaged UI cannot capture audio. */
 class HotelActivity : Activity() {
     private var reception: ReceptionView? = null
     private val deck by lazy { getSharedPreferences("deck", MODE_PRIVATE) }
     private val owner = SessionOwner()
     private val ui = Handler(Looper.getMainLooper())
     private val ringing = AtomicBoolean(false)
-    private val fishStore by lazy { SecretStore(this, "fish") }
     private val updater by lazy { Updater(this,
         onStatus = { status -> runOnUiThread { onUpdate(status) } },
         canInstall = ::canInstallUpdate) }
@@ -42,18 +39,13 @@ class HotelActivity : Activity() {
             ui.postDelayed(this, 10 * 60_000L)
         }
     }
-    private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty().ifBlank { BuildConfig.FISH_API_KEY } } }
-    private val fish by fishProvider
     private val hotelConnection by lazy { HotelConnection(this) }
     private var gateway: HotelGateway? = null
     private val afterRelease = ArrayList<() -> Unit>()
-    private enum class Engine { FISH }
-    private var engine: Engine? = null
     private var night = false
     private var foreground = false
     private var destroyed = false
     private var backCallback: OnBackInvokedCallback? = null
-    private var pendingPermission: SessionOwner.Lease? = null
     private var returnToTranslation = false
     private var audioState = "off"
     private var lastActivity = 0L
@@ -62,10 +54,6 @@ class HotelActivity : Activity() {
             if (destroyed) return
             if (owner.current != null && !owner.closing && SystemClock.elapsedRealtime() - lastActivity >= 120_000)
                 stopSession("timeout", "Conversation ended after two minutes without guest activity.")
-            if (owner.current == null && audioState != fish.localAudioState()) {
-                audioState = fish.localAudioState()
-                pushState()
-            }
             updater.tryInstallIfIdle()
             ui.postDelayed(this, 1_000)
         }
@@ -73,8 +61,7 @@ class HotelActivity : Activity() {
 
     private fun backendConfigured() = hotelConnection.load() != null
     private fun canInstallUpdate(): Boolean = foreground && !destroyed && owner.current == null &&
-        !owner.closing && pendingPermission == null && audioState == "off" &&
-        fish.localAudioState() == "off" && fish.admissionIssue() == null
+        !owner.closing && audioState == "off"
     private fun current(lease: SessionOwner.Lease) = owner.accepts(lease.request.id, lease.generation)
     private fun scoped(lease: SessionOwner.Lease, message: JSONObject) = message
         .put("session_id", lease.request.id).put("generation", lease.generation)
@@ -88,9 +75,7 @@ class HotelActivity : Activity() {
     private fun pushState() {
         val page = reception ?: return
         val ready = backendConfigured()
-        if (owner.current == null) audioState = fish.localAudioState()
-        val audioGate = AudioPolicy.blockReason(ready, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank(),
-            TranslationSettings(this).directFishSelected)
+        val audioGate = AudioPolicy.blockReason()
         val audioReady = audioGate.isEmpty()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
@@ -108,39 +93,6 @@ class HotelActivity : Activity() {
         page.push(JSONObject().put("type", "connection").put("connected", ready))
     }
 
-    private fun forward(message: JSONObject) {
-        val type = message.optString("type")
-        val lease = owner.current
-        if (lease == null) {
-            if (type == "audio_state" && message.optString("state") == "off" &&
-                owner.confirmLateRelease(message.optString("session_id"), message.optInt("generation", -1))) {
-                audioState = "off"
-                reception?.push(message)
-            }
-            return
-        }
-        if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), type == "audio_state")) return
-        if (type == "audio_state") {
-            val value = message.optString("state")
-            if (value != "off" && value != "recording" && value != "unknown" && value != "muted") return
-            audioState = if (owner.closing && value == "recording") "unknown" else value
-            reception?.push(message.put("state", audioState))
-            return
-        }
-        if (type == "reception_event") {
-            when (message.optString("phase")) {
-                "idle", "ended", "stopped", "closed", "timeout", "error", "failed", "blocked" -> {
-                    val phase = message.optString("phase")
-                    stopSession(if (phase == "idle") "timeout" else phase, message.optString("text", message.optString("message")))
-                    return
-                }
-            }
-        }
-        if (type == "caption" && message.optString("field") == "original" && message.optString("text").isNotBlank())
-            lastActivity = SystemClock.elapsedRealtime()
-        if (current(lease)) reception?.push(message)
-    }
-
     private fun begin(request: SessionOwner.Request) {
         if (updater.isInstalling()) {
             reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
@@ -150,17 +102,12 @@ class HotelActivity : Activity() {
                 .put("session_id", request.id).put("generation", 0))
             return
         }
-        val blocked = if (request.mode == "translation") fish.admissionIssue() else null
-        if (blocked != null) {
-            fish.retryCleanup()
-            // The WebView has proposed an ID but native admission has not acquired it.
-            // Reject that proposal explicitly; do not leave the screen stuck in Connecting.
-            audioState = fish.localAudioState()
-            val last = owner.lastReleasedLease
-            if (last != null && audioState == "off") owner.confirmLateRelease(last.request.id, last.generation)
-            reception?.push(JSONObject().put("type", "audio_state").put("state", audioState)
+        if (request.mode == "translation") {
+            // Reject before acquiring a session or asking for microphone access.
+            reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
                 .put("session_id", request.id).put("generation", 0))
-            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error").put("text", blocked)
+            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error")
+                .put("text", AudioPolicy.BLOCK_REASON)
                 .put("session_id", request.id).put("generation", 0))
             return
         }
@@ -169,12 +116,7 @@ class HotelActivity : Activity() {
         audioState = "off"
         phase(lease, "connecting")
         audio(lease, "off")
-        if (request.mode == "reception") {
-            connect(lease)
-        } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            pendingPermission = lease
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5)
-        } else connect(lease)
+        connect(lease)
     }
 
     private fun connect(lease: SessionOwner.Lease) {
@@ -190,38 +132,28 @@ class HotelActivity : Activity() {
             audio(lease, "off")
             phase(lease, "ready")
             return
-        } else {
-            // The only approved route is the Fish-hosted interpreter; never fall back to another provider.
-            engine = Engine.FISH
-            fish.start(request.guest, request.staff, request.mode, request.id, lease.generation, request.greeting)
         }
     }
 
     private fun stopSession(reason: String = "stopped", text: String = "", done: (() -> Unit)? = null) {
-        pendingPermission = null
         if (done != null) afterRelease.add(done)
         val lease = owner.beginClose()
         if (lease == null) { if (owner.current == null) finishReleaseActions(); return }
         gateway?.end()
         phase(lease, "ending")
         audio(lease, "stopping")
-        val selected = engine
-        engine = null
         val released: () -> Unit = {
             runOnUiThread {
                 if (owner.current == lease && owner.closing) {
-                    val off = audioState == "off"
-                    audio(lease, if (off) "off" else "unknown")
-                    owner.released(lease, off)
+                    audioState = "off"
+                    audio(lease, "off")
+                    owner.released(lease, true)
                     phase(lease, reason, text)
                     finishReleaseActions()
                 }
             }
         }
-        when (selected) {
-            Engine.FISH -> fish.stop(released)
-            null -> released()
-        }
+        released()
     }
 
     private fun finishReleaseActions() {
@@ -308,9 +240,6 @@ class HotelActivity : Activity() {
                 if (DeskLanguages.has(guest) && DeskLanguages.has(staff)) deck.edit()
                     .putString("reception_guest_language", guest).putString("reception_staff_language", staff).apply()
             }
-            "prepare_translation" -> if (foreground && !destroyed && owner.current == null) {
-                fish.prepare(message.optString("language"), message.optString("staff_language"))
-            }
             "bell" -> ringBell()
             "settings" -> openStaffSetup()
             "voice_setup" -> openStaffSetup(voiceOnly = true)
@@ -339,8 +268,6 @@ class HotelActivity : Activity() {
                 gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
             }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
-            "mute" -> owner.current?.takeIf { current(it) && it.request.mode == "translation" }
-                ?.let { fish.setMuted(message.optBoolean("muted")) }
             "silence" -> if (owner.current != null) stopSession()
             "exit" -> stopSession(done = { finish() })
             "check_updates" -> updater.check()
@@ -367,6 +294,7 @@ class HotelActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        RetiredCredentials.remove(this)
         val dark = deck.getString("reception_appearance", "dark") != "light"
         window.setBackgroundDrawable(ColorDrawable(if (dark) Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242)))
         if (Build.VERSION.SDK_INT >= 33) {
@@ -391,14 +319,6 @@ class HotelActivity : Activity() {
             returnToTranslation = false
             reception?.push(JSONObject().put("type", "translation_setup_return"))
         }
-        // Permission results can arrive before onResume. Start only after this
-        // window is foreground again, and consume the pending request once.
-        pendingPermission?.takeIf {
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        }?.let { lease ->
-            pendingPermission = null
-            if (current(lease)) connect(lease)
-        }
         updater.onForeground()
         updater.check()
         ui.removeCallbacks(updatePoll)
@@ -411,39 +331,12 @@ class HotelActivity : Activity() {
         // Both Save and Cancel return here; neither starts microphone capture.
         if (requestCode == 41) returnToTranslation = true
     }
-    override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
-        super.onRequestPermissionsResult(code, permissions, results)
-        if (code != 5) return
-        val lease = pendingPermission ?: return
-        if (!current(lease)) { pendingPermission = null; return }
-        if (results.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
-            pendingPermission = null
-            stopSession("error", "Microphone permission is required. No conversation has started.")
-        } else if (foreground) {
-            pendingPermission = null
-            connect(lease)
-        }
-    }
     override fun onPause() {
         foreground = false
-        if (fishProvider.isInitialized()) fish.cancelPreparation()
         ui.removeCallbacks(updatePoll)
-        // The system permission dialog pauses us without hiding this window.
-        // No microphone exists yet; retain its proposed session and visible UI.
-        if (pendingPermission == null) {
-            stopSession()
-            reception?.setShown(false)
-        }
+        stopSession()
+        reception?.setShown(false)
         super.onPause()
-    }
-    override fun onStop() {
-        // Leaving the app while permission is pending must cancel the proposal.
-        // A later permission grant must never start capture in the background.
-        if (pendingPermission != null) {
-            stopSession()
-            reception?.setShown(false)
-        }
-        super.onStop()
     }
     override fun onDestroy() {
         destroyed = true
@@ -451,7 +344,6 @@ class HotelActivity : Activity() {
         ui.removeCallbacks(watchdog)
         ui.removeCallbacks(updatePoll)
         stopSession(done = {
-            if (fishProvider.isInitialized()) fish.release()
             gateway?.dispose()
         })
         reception?.dispose(); reception = null

@@ -27,11 +27,11 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/** Personal Fish setup is open; hotel administration still requires the device credential. */
+/** Hotel administration requires the device credential; translation status exposes no keys. */
 class KeyEntryActivity : Activity() {
-    // This internal entry point exposes only the personal Fish key, never hotel administration.
+    // The public internal status path exposes no hotel administration or credential fields.
     private val voiceOnly get() = intent.getBooleanExtra("voice_only", false)
-    private val setupTitle get() = if (voiceOnly) "Translation setup" else "Staff setup"
+    private val setupTitle get() = if (voiceOnly) "Translation unavailable" else "Staff setup"
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
     private var authenticated = false
     private var authenticationInFlight = false
@@ -153,15 +153,13 @@ class KeyEntryActivity : Activity() {
         val column = column()
         if (voiceOnly) {
             column.addView(label(setupTitle, 24f))
-            column.addView(label("Save your Fish Audio API key to translate directly on this device. The key stays encrypted here. After saving, return to your selected languages and tap Start translation."))
-            addProvider(column, "Fish Audio", "fish", returnAfterSave = true)
-            column.addView(button("Cancel") { finish() })
+            column.addView(label(AudioPolicy.BLOCK_REASON))
+            column.addView(button("Close") { finish() })
             setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
             return
         }
         column.addView(label("Staff setup", 24f))
-        column.addView(label("Live translation needs a Fish Audio API key on this device or a hotel connection. Check the saved-key status below. Keys stay encrypted on this device; a saved key still needs provider access to start a conversation."))
-        addProvider(column, "Fish Audio", "fish")
+        column.addView(label(AudioPolicy.BLOCK_REASON + " Hotel service setup below is for staff-led assistance."))
         column.addView(label("Hotel service", 20f))
         val connectionUrl = EditText(this).apply {
             hint = "HTTPS hotel service URL"
@@ -189,24 +187,19 @@ class KeyEntryActivity : Activity() {
         })
     }
 
-    private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null,
-                            returnAfterSave: Boolean = false) {
-        // The personal path exposes only Fish. Hotel fields require staff authentication.
+    private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null) {
+        // Hotel fields require staff authentication.
         if (!authorized()) return
         val store = SecretStore(this, prefsName)
         val connection = if (connectionUrl != null) HotelConnection(this) else null
         val status = label("")
-        var savedKeyButton: Button? = null
         fun refresh() {
             if (!authorized()) return
             val savedStatus = store.status()
-            savedKeyButton?.visibility = if (savedStatus == SecretStore.Status.READY) View.VISIBLE else View.GONE
             status.text = when (savedStatus) {
                 SecretStore.Status.READY -> "$provider: a key is securely saved. Entering a new key replaces it."
                 SecretStore.Status.ABSENT -> "$provider: no device key is saved."
-                SecretStore.Status.ERROR -> if (returnAfterSave)
-                    "$provider: the saved key could not be read. Paste your original Fish Audio key to replace it. The stored entry is kept until a replacement is saved."
-                else "$provider: ${store.errorMessage}"
+                SecretStore.Status.ERROR -> "$provider: ${store.errorMessage}"
             }
         }
         column.addView(label(provider, 20f))
@@ -264,7 +257,7 @@ class KeyEntryActivity : Activity() {
         }
         fields.add(field)
         column.addView(field)
-        column.addView(button(if (returnAfterSave) "Save and return" else "Save $provider key") {
+        column.addView(button("Save $provider key") {
             if (!authorized()) return@button
             val value = field.text.toString().trim()
             if (value.isEmpty() || value.any { it.isWhitespace() }) {
@@ -272,22 +265,9 @@ class KeyEntryActivity : Activity() {
             } else if (if (connection != null) connection.save(connectionUrl!!.text.toString(), value) else store.save(value)) {
                 field.setText("")
                 refresh()
-                val settings = TranslationSettings(this)
-                val routeSaved = when {
-                    returnAfterSave -> settings.selectDirectFish()
-                    connection != null -> settings.selectHotelConnection()
-                    else -> true
-                }
-                if (!routeSaved) {
-                    status.text = "$provider key is saved, but the translation connection could not be selected. Try saving again."
-                    return@button
-                }
                 Toast.makeText(this, "$provider key securely saved.", Toast.LENGTH_SHORT).show()
-                if (returnAfterSave) finish()
             } else {
-                status.text = if (returnAfterSave)
-                    "$provider: the key could not be securely saved. Check device storage and try again; the previous stored entry has been kept."
-                else "$provider: ${connection?.errorMessage ?: store.errorMessage}"
+                status.text = "$provider: ${connection?.errorMessage ?: store.errorMessage}"
             }
         })
         column.addView(button("Remove $provider key") {
@@ -300,9 +280,7 @@ class KeyEntryActivity : Activity() {
                     if (authorized()) {
                         store.clear()
                         field.setText("")
-                        if (store.status == SecretStore.Status.ERROR) status.text = if (returnAfterSave)
-                            "$provider: the saved key could not be removed. Check device storage and try again."
-                        else "$provider: ${store.errorMessage}"
+                        if (store.status == SecretStore.Status.ERROR) status.text = "$provider: ${store.errorMessage}"
                         else refresh()
                     }
                 }.create().also {
@@ -311,18 +289,6 @@ class KeyEntryActivity : Activity() {
                     it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 }
         })
-        if (returnAfterSave) {
-            savedKeyButton = button("Use saved key") {
-                if (!authorized()) return@button
-                if (store.load().isNullOrBlank()) {
-                    refresh()
-                } else if (TranslationSettings(this).selectDirectFish()) {
-                    finish()
-                } else {
-                    status.text = "The saved key is available, but the translation connection could not be selected. Try again."
-                }
-            }.also(column::addView)
-        }
         refresh()
     }
 

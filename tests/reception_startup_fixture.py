@@ -64,35 +64,25 @@ def run_startup_fixture(browser, legacy_object_api=False):
         page.locator('[data-action="translation"]').click()
         assert page.locator('[data-action="start"]').is_disabled(), "Same-language start must be blocked"
         assert "two different languages" in page.locator("#translation-readiness").inner_text()
-        receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off", "audio_gate": "Configure translation with your Fish Audio API key."})
-        assert "Configure translation" in page.locator("#translation-readiness").inner_text()
-        assert page.locator("#settings").is_visible(), "Configuration help must remain reachable"
-        assert page.locator('.setup-start').count() == 1, "Setup must have one primary action"
-        assert page.locator('[data-action="start"]').count() == 0, "Do not render a second disabled Start"
-        page.locator('[data-action="setup-translation"]').click()
+        receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off",
+                 "audio_gate": "Live translation is unavailable in this build."})
+        assert "Live translation is unavailable in this build." in page.locator("#translation-readiness").inner_text()
+        assert page.locator('[data-action="start"]').is_disabled(), "Unavailable translation must not offer a start"
+        assert page.locator('[data-action="setup-translation"]').count() == 0, "Removed provider has no key setup action"
+        assert page.locator("#settings").is_visible(), "Translation status must remain reachable"
+        page.locator('#settings').click()
         assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 1
         assert not page.evaluate("fixtureMessages.some(event => event.action === 'start')")
-        page.locator('#settings').click()
-        assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 2
-        assert not page.evaluate("fixtureMessages.some(event => event.action === 'settings')"), "Translation settings must not open protected hotel administration"
+        assert not page.evaluate("fixtureMessages.some(event => event.action === 'settings')"), "Translation status must not expose hotel administration"
         receive({"type": "visibility", "visible": False})
         receive({"type": "visibility", "visible": True})
         receive({"type": "translation_setup_return"})
         assert page.locator('#language').input_value() == "en"
         assert page.locator('#staff_language').input_value() == "en"
-        assert page.locator('[data-action="setup-translation"]').is_enabled(), "Cancelled setup must return to language selection"
-        receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off",
-                 "audio_gate": "The saved voice key could not be opened. Open Fish Audio setup to replace it."})
-        assert "saved voice key could not be opened" in page.locator("#translation-readiness").inner_text()
-        assert page.locator('[data-action="setup-translation"]').is_enabled()
-        receive({"type": "visibility", "visible": False})
-        receive({"type": "visibility", "visible": True})
+        assert page.locator('[data-action="start"]').is_disabled()
+        # A synthetic native bridge can advertise audio to exercise the generic
+        # language/session message contract. The shipped Activity never does so.
         receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off"})
-        receive({"type": "translation_setup_return"})
-        assert page.locator('[data-action="setup-translation"]').count() == 0
-        page.locator('#settings').click()
-        assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 3
-        assert not page.evaluate("fixtureMessages.some(event => event.action === 'settings')")
         page.locator('#language').select_option("es")
         assert page.locator('[data-action="start"]').is_enabled(), "Distinct languages with configured audio cannot start"
         page.locator('[data-action="start"]').click()

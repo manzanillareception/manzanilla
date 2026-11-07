@@ -17,7 +17,7 @@ import java.util.UUID
  */
 internal object UpdaterFixture {
     fun verify(instrumentation: Instrumentation) {
-        check(BuildConfig.DEBUG && BuildConfig.FISH_API_KEY.isBlank()) { "Use a key-free debug verification APK" }
+        check(BuildConfig.DEBUG) { "Use a debug verification APK" }
         val base = instrumentation.targetContext
         val root = File(base.cacheDir, "updater-fixture-${UUID.randomUUID()}").apply { mkdirs() }
         val prefix = root.name

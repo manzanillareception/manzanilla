@@ -25,8 +25,8 @@ def test_release_inputs_require_both_version_changes(path):
 
 
 def test_docs_backend_and_test_only_changes_do_not_require_an_apk():
-    paths = ["README.md", "docs/update-delivery.md", "AGENTS.md", "cloud/fish.py",
-             "tests/test_fish.py", "tests/test_release_policy.py", "android-guide.md"]
+    paths = ["README.md", "docs/update-delivery.md", "AGENTS.md", "cloud/operations.py",
+             "tests/test_operations.py", "tests/test_release_policy.py", "android-guide.md"]
     assert not any(release_impact(path) for path in paths)
     assert validate_change(paths, "17.0.28", "58", "17.0.28", "58") is False
 

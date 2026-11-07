@@ -1,28 +1,7 @@
-"""The display-only model report contract ships identically in both provisioning paths."""
-import json
+"""The provider-neutral language evidence module loads before the reception UI."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-
-
-def test_native_and_managed_caption_tool_contracts_match():
-    managed = json.loads((ROOT / 'cloud/fish_caption_tool.json').read_text())
-    native = json.loads((ROOT / 'android/hotel/src/main/assets/fish-caption-tool.json').read_text())
-    assert managed == native
-    assert managed['tool_type'] == 'client'
-    assert managed['expects_response'] is False
-    # execution_mode is a webhook-only setting, not valid for client tools.
-    assert 'execution_mode' not in managed
-    assert {argument['name'] for argument in managed['arguments']} == {'source_language', 'original', 'translation'}
-    assert not managed.get('url')
-    assert not managed.get('headers')
-
-
-def test_legacy_managed_caption_tool_uses_client_fire_and_forget_contract():
-    legacy = json.loads((ROOT / 'cloud/fish_caption_tool_v1.json').read_text())
-    assert legacy['tool_type'] == 'client'
-    assert legacy['expects_response'] is False
-    assert 'execution_mode' not in legacy
 
 
 def test_language_evidence_module_is_loaded_before_reception():

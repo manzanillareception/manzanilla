@@ -1,60 +1,65 @@
-# Mobile key-handling and future-auth boundary (design note - docs only, nothing built)
+# Mobile credentials and authentication phases (design note)
 
-Status: design note for review. No code, no backend, no new build follows from
-this file. Live configs and the repo build path are unchanged.
-Scope source: Som's Nov 6 20:03 IST steering - mobile app works with the
-Cartesia key for now; later, Google sign-in approved by our own backend
-decides who may use the app; "do not start the backend."
+This document defines integration boundaries; it does not implement mobile
+Cartesia access, deploy a backend or change live agent configuration.
 
-## 1. Open decision: where the Cartesia key lives today
+## V1 product and source baseline
 
-Option A (recommended): device-local entry.
-- The tester enters the key once on each test device; the app stores it
-  wrapped by the Android Keystore (EncryptedSharedPreferences/DataStore).
-- No shared secret in any build artifact. This matches the key-free contract
-  enforced repo-wide since v17.0.41 and keeps the release byte-check honest.
-- Cost: one manual entry per device.
+- OpenAI provides live translation; Cartesia provides guest reception only.
+- No Google sign-in or app account login is required for V1. Reception starts
+  only through the reception button or a verified physical handset signal.
+- The recovered `Manzanilla-Source-for-V2-2026-10-30.zip` contains the v27 app:
+  `com.agentdeck`, version `1.4.7-reception-themes` / code 27. It has an OpenAI
+  implementation and on-device key storage. It is distinct from the repository's
+  legacy `dev.orange.hotel` app. Preserve the correct package, signer and user data
+  when integrating; the archive does not include the original signing key.
+- Gama 804 handset detection remains **UNVERIFIED HARDWARE**.
 
-Option B (needs explicit owner instruction after the tradeoff is heard):
-embed a shared Cartesia key in the APK.
-- Anyone with the APK can extract it. This is not hypothetical: the Fish
-  production key was byte-verified inside the public v17.0.37 and v17.0.39
-  APKs on Nov 6, and that key is still live. An embedded Cartesia key would
-  repeat the same exposure with a second provider.
-- Later Google-auth gating cannot un-extract a key that already shipped.
-  Every APK that embeds it is a permanent distribution of the credential.
+## Open owner decision: Cartesia credentials and transport
 
-Holding position: Option B is NOT implemented. Awaiting the owner's answer to
-the device-local alternative (asked by main, Nov 6 20:03).
+Neither option below is selected by this note. Keep a small provider interface
+so the owner can choose without rewriting reception behavior.
 
-## 2. Future-state architecture (documented, NOT built)
+**Option A — device-local BYOK.** The owner enters their Cartesia key on the
+device. Store it with Android Keystore-backed encryption, mask it after entry,
+and support replacement and removal. Keep it out of logs, analytics, backups,
+source and build artifacts. A storage container alone does not provide encryption.
+Transmit it only to the intended provider over TLS.
 
-- The app never holds a provider key. After Google sign-in, our backend
-  verifies the Google ID token, checks the allowlist, and issues a
-  short-lived session token.
-- The app talks only to our backend; the backend talks to Cartesia
-  (short-lived token brokering or session proxy - mechanism chosen against
-  current Cartesia docs at implementation time, not assumed here).
-- Enforcement truth: access is NOT restricted to approved users until that
-  backend exists. Until then, every build is a tester-only build and must be
-  labeled as such. No UI or doc may claim access restriction before it is real.
+**Option B — authenticated backend relay, a later phase.** The device uses an
+approved relay interface while the provider key remains server-side. Specify and
+verify client authentication, authorization, session limits and revocation before
+deployment. The current V2 Google/admin flow is a separate phase; do not silently
+introduce it into the V1 guest flow or expose an unauthenticated shared-key relay.
 
-## 3. Code boundary to keep clean now (so the migration is a swap, not a rewrite)
+Embedding a shared provider key in an APK is prohibited. It is not a third option:
+anyone holding that APK can extract the credential, and later login cannot undo
+its distribution. Historical credential exposure does not justify repeating it.
 
-- All provider access sits behind one CredentialProvider seam:
-  DeviceLocalCredentialProvider (today) and BackendSessionCredentialProvider
-  (future). No provider key strings anywhere else.
-- No credential in BuildConfig, resources, or the manifest - enforced since
-  v17.0.41; the release-policy source scan plus artifact byte-checks remain
-  the proof.
-- Auth modeled behind an AuthGate seam: NoopAuthGate today (must surface
-  "unauthenticated test build" honestly), GoogleAuthGate later.
-- Nothing in this note authorizes writing that code: the mobile source for new
-  work is the v27 ZIP, which is still missing. When it lands, reconcile these
-  seams against the real source instead of assuming a greenfield layout.
+## V2 source status and enforcement
 
-## 4. Explicitly out of scope now
+The separate `manzanilla-web/src/v2` backend source is already on main. It verifies
+Google identity, requires admin-approved sessions, and gates the Cartesia relay.
+Its source and automated tests are evidence of the implemented backend design,
+not a deployed service or a working mobile integration.
 
-Backend code or deployment, Google auth SDK wiring, any store/internal
-distribution, any new release, and any change to the live nightdesk or
-interpreter agents.
+Google sign-in, centralized account approval and the admin dashboard belong to
+V2. Until a chosen authentication path is deployed and verified end to end, do
+not claim that mobile access is centrally restricted or that revocation stops a
+live call. Deployment requires the appropriate ownership, origins and secrets.
+
+## Proposed mobile boundaries and validation
+
+- A reception provider interface separates device-local credentials from relay
+  sessions. These mobile adapters are proposed, not claimed to exist today.
+- Model authentication separately: V1 has no cloud-login gate; V2 may use an
+  authenticated session gate after its own integration and acceptance checks.
+- Keep OpenAI translation and Cartesia reception lifecycles separate, with an
+  explicit microphone/speaker ownership rule. Neither can hijack the other.
+- Preserve existing encrypted OpenAI entries and their Keystore alias across
+  updates. Verify replacement/removal, error handling and retained data on device.
+- Inspect source and the final APK for bundled credentials. A source-pattern
+  scan alone is not proof that an artifact contains no secret.
+
+Merging this note does not select a transport or authorize provider calls,
+deployment, publication, distribution or a live agent configuration change.

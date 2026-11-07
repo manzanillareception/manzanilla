@@ -48,7 +48,7 @@
             !['append', 'replace'].includes(event.operation) || typeof event.text !== 'string' || typeof event.final !== 'boolean') return [];
         const assistant = event.side === 'assistant';
         if (event.field !== (assistant ? 'text' : 'original')) return [];
-        // An output can join a source only through an explicit reference. Fish segment IDs
+        // An output can join a source only through an explicit reference. Provider segment IDs
         // and the latest bubble are not translation links. Unlinked output stays neutral.
         const parent = assistant && typeof event.source_utterance_id === 'string' ? this.byId.get(this.key(event, 'human', event.source_utterance_id)) : null;
         const id = this.key(event, assistant ? 'assistant' : 'human');
