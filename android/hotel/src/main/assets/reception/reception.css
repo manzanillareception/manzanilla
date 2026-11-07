@@ -130,3 +130,14 @@ html[data-voice="reception"] .topbar,html[data-voice="reception"] .footer>:not(#
 
 @media(min-width:1100px){.notifications-panel{top:104px;right:64px}}
 @media(max-width:420px){.night-toggle{max-width:70px;white-space:normal;line-height:1.2}}
+
+/* Reserve the heading row for Back; compact short landscape transcripts. */
+html[data-translation="live"] .pair-title{display:flex;align-items:center;justify-content:center;min-height:36px;width:100%;padding:0 52px}
+@media(max-height:400px){
+  html[data-translation="live"] .content[data-page="active"]{padding-top:8px;gap:6px}
+  html[data-translation="live"] .session-scroll{padding:4px 4px 8px}
+  html[data-translation="live"] .live-transcript{gap:8px;padding:10px 14px;border-radius:14px}
+  html[data-translation="live"] .live-transcript-text{font-size:18px;line-height:1.3}
+  html[data-translation="live"] .live-transcript-text+.live-transcript-text{padding-top:8px}
+  html[data-translation="live"] .voice-ball{width:56px;height:56px;margin:6px auto}
+}

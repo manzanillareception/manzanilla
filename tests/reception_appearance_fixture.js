@@ -88,6 +88,16 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   const translatedText = 'Guten Morgen.\nGood morning.';
   receive({ ...scope, type: 'translation_text', turn_id: 'appearance-turn', operation: 'append', text: translatedText, final: false });
   assert(doc.querySelector('.live-transcript-text[data-turn-id="appearance-turn"]')?.textContent === translatedText, 'Translation stream is visible before palette checks');
+  receive({ ...scope, type: 'translation_text', turn_id: 'appearance-second', text: 'A second response stays on its own line.', final: true });
+  receive({ ...scope, type: 'translation_text', turn_id: 'appearance-third', text: 'Une troisième réponse.', final: true });
+  const initialClip = doc.querySelector('.session-scroll').getBoundingClientRect();
+  const backButton = doc.querySelector('.translate-back').getBoundingClientRect();
+  assert([...doc.querySelectorAll('.live-transcript-text')].every(node => {
+    const rect = node.getBoundingClientRect();
+    const overlapsBack = rect.left < backButton.right && rect.right > backButton.left && rect.top < backButton.bottom && rect.bottom > backButton.top;
+    return rect.top >= initialClip.top - 1 && rect.bottom <= initialClip.bottom + 1 && !overlapsBack;
+  }), 'The initial three response rows are fully visible and do not overlap Back');
+
   assert(doc.querySelectorAll('.live-transcript').length === 1 && !doc.querySelector('.caption-side,.caption-guest,.caption-reception'), 'Translation has one centered response without speaker sides');
   assert(styles('.pair-title').color === 'rgb(38, 38, 36)', 'Active translation heading uses day palette');
   assert(styles('.live-transcript-text').color === 'rgb(38, 38, 36)', 'Day translation text is readable');

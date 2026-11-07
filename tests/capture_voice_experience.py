@@ -132,7 +132,20 @@ def capture(browser, output, width, height, screen):
                         (!index || rect.top >= rows[index-1].getBoundingClientRect().bottom - 1);
                 });
             }"""), "Translation rows must stay separately centered"
-            bounds = assert_bounds(page, ['.pair-title', '.voice-ball', '#privacy'])
+            assert page.evaluate("""() => {
+                const clip = document.querySelector('.session-scroll').getBoundingClientRect();
+                const back = document.querySelector('.translate-back').getBoundingClientRect();
+                const box = document.querySelector('.live-transcript').getBoundingClientRect();
+                const rows = [...document.querySelectorAll('.live-transcript-text')];
+                return box.top >= clip.top - 1 && box.bottom <= clip.bottom + 1 && rows.every(row => {
+                    const rect = row.getBoundingClientRect();
+                    const overlapsBack = rect.left < back.right && rect.right > back.left && rect.top < back.bottom && rect.bottom > back.top;
+                    return rect.top >= clip.top - 1 && rect.bottom <= clip.bottom + 1 && !overlapsBack;
+                });
+            }"""), "The initial three response rows must be fully visible in the transcript viewport and clear of Back"
+            bounds = assert_bounds(page, ['.pair-title', '.translate-back', '.live-transcript',
+                                         '[data-turn-id="response-fr-1"]', '[data-turn-id="response-en-1"]',
+                                         '[data-turn-id="response-fr-2"]', '.voice-ball', '#privacy'])
         elif screen == "night-assistant":
             scope = start_voice(page, "reception")
             receive(page, {**scope, "type": "assistant_text", "text": "Tell me what you need for your stay.", "final": False})
