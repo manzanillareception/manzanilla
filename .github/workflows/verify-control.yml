@@ -1,0 +1,136 @@
+name: Verify V2 control plane
+
+on:
+  push:
+    branches: [main, test-branch]
+    paths:
+      - control/**
+      - admin-v2/**
+      - infra/v2/**
+      - scripts/control*
+      - tests/control/**
+      - requirements-control*.txt
+      - requirements.txt
+      - .github/workflows/verify-control.yml
+      - .github/workflows/prepare-control-deployment.yml
+  pull_request:
+    paths:
+      - control/**
+      - admin-v2/**
+      - infra/v2/**
+      - scripts/control*
+      - tests/control/**
+      - requirements-control*.txt
+      - requirements.txt
+      - .github/workflows/verify-control.yml
+      - .github/workflows/prepare-control-deployment.yml
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  control-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: control
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: manzanilla_control
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U control -d manzanilla_control"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      MANZ_ENVIRONMENT: test
+      MANZ_DATABASE_URL: postgresql+psycopg://control:fixture-only@127.0.0.1:5432/manzanilla_control
+      MANZ_TEST_DATABASE_URL: postgresql+psycopg://control:fixture-only@127.0.0.1:5432/manzanilla_control
+      MANZ_PUBLIC_ORIGIN: http://testserver
+      MANZ_SUPABASE_URL: https://identity.example.invalid
+      MANZ_SUPABASE_PUBLISHABLE_KEY: fixture-publishable
+      MANZ_SUPABASE_SECRET_KEY: fixture-secret
+      MANZ_COOKIE_SECURE: "false"
+    steps:
+      # Immutable upstream action revisions resolved on 2026-11-07.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-control.txt
+            requirements-control-dev.txt
+      - name: Install isolated control test dependencies
+        run: python -m pip install -r requirements-control-dev.txt
+      - name: Generate a disposable fixture encryption key
+        run: python -c "from cryptography.fernet import Fernet; import os; open(os.environ['GITHUB_ENV'], 'a').write('MANZ_SESSION_ENCRYPTION_KEY=' + Fernet.generate_key().decode() + '\n')"
+      - name: Exercise forward and reverse migrations on disposable PostgreSQL
+        run: |
+          alembic -c control/alembic.ini upgrade head
+          alembic -c control/alembic.ini downgrade base
+          alembic -c control/alembic.ini upgrade head
+          alembic -c control/alembic.ini check
+      - name: Verify control API, authorization and persistence
+        run: python -m pytest tests/control -q
+      - name: Compile production modules
+        run: python -m compileall -q control scripts/control_deploy.py scripts/control_smoke.py scripts/control_vm_check.py
+      - name: Validate container topology without starting services
+        run: |
+          control_fixture_env="$(mktemp)"
+          trap 'rm -f "$control_fixture_env"' EXIT
+          MANZ_CONTROL_IMAGE=example.invalid/control:fixture \
+          MANZ_PORTAL_IMAGE=example.invalid/portal:fixture \
+          MANZ_ENV_FILE="$control_fixture_env" \
+          MANZ_DOMAIN=console.example.invalid \
+          docker compose --file infra/v2/compose.yml config --quiet
+      - name: Validate HTTPS proxy configuration without starting a server
+        run: >-
+          docker run --rm --entrypoint caddy
+          --env MANZ_DOMAIN=console.example.invalid
+          --mount type=bind,src="$PWD/infra/v2/Caddyfile",dst=/etc/caddy/Caddyfile,readonly
+          caddy:2-alpine validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  portal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: admin-v2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: admin-v2/package-lock.json
+      - run: npm ci --strict-ssl=true
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated browser and backend fixtures
+        working-directory: .
+        run: |
+          python -m pip install -r requirements-control-dev.txt
+          python -m pip install -r requirements-browser.txt
+      - name: Install Chromium for the synthetic end-to-end flow
+        working-directory: .
+        run: python -m playwright install --with-deps chromium
+      - name: Exercise real backend and built portal together
+        working-directory: .
+        run: python tests/control/browser_smoke.py

@@ -1,0 +1,54 @@
+name: Prepare V2 deployment candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Review destination; this workflow prepares files and does not deploy
+        type: choice
+        options: [staging, production]
+        required: true
+        default: staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-candidate-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test-branch'
+    uses: ./.github/workflows/verify-control.yml
+
+  prepare:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build key-free review images
+        run: |
+          docker build --file infra/v2/backend.Dockerfile --label "org.opencontainers.image.revision=${GITHUB_SHA}" --tag "manzanilla-control:review-${GITHUB_SHA}" .
+          docker build --file infra/v2/portal.Dockerfile --label "org.opencontainers.image.revision=${GITHUB_SHA}" --tag "manzanilla-portal:review-${GITHUB_SHA}" .
+      - name: Prepare review bundle without runtime credentials
+        run: |
+          mkdir -p work/control-candidate/infra/v2 work/control-candidate/scripts
+          cp infra/v2/compose.yml infra/v2/app.env.example infra/v2/migration.env.example infra/v2/runtime-role.sql infra/v2/Caddyfile work/control-candidate/infra/v2/
+          cp scripts/control_deploy.py scripts/control_smoke.py scripts/control_vm_check.py work/control-candidate/scripts/
+          cp docs/v2-deployment.md work/control-candidate/README.md
+          git rev-parse HEAD > work/control-candidate/SOURCE_COMMIT
+          docker image inspect "manzanilla-control:review-${GITHUB_SHA}" "manzanilla-portal:review-${GITHUB_SHA}" --format '{{.Id}}' > work/control-candidate/LOCAL_IMAGE_IDS
+          docker save "manzanilla-control:review-${GITHUB_SHA}" "manzanilla-portal:review-${GITHUB_SHA}" | gzip > work/control-candidate/review-images.tar.gz
+          cd work/control-candidate
+          sha256sum review-images.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: control-key-free-candidate-${{ github.sha }}
+          path: work/control-candidate/
+          retention-days: 7
+          if-no-files-found: error

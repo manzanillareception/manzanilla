@@ -176,11 +176,15 @@ class KeyEntryActivity : Activity() {
             column.addView(button("Connection diagnostics") {
                 startActivity(Intent(this, DiagnosticsActivity::class.java))
             })
+            column.addView(button("Fleet enrollment (staff)") {
+                startActivity(Intent(this, FleetSetupActivity::class.java))
+            })
             column.addView(button("Done") { finish() })
             setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
             return
         }
         column.addView(label("Staff setup", 24f))
+        column.addView(button("Fleet enrollment") { startActivity(Intent(this, FleetSetupActivity::class.java)) })
         column.addView(label("Hotel service setup is for staff-led assistance. Translation and night reception have separate V1 settings."))
         column.addView(button("OpenAI translation key") { startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", true)) })
         column.addView(button("Night receptionist setup") { startActivity(Intent(this, KeyEntryActivity::class.java).putExtra("night_only", true)) })

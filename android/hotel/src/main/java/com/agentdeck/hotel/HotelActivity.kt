@@ -61,6 +61,9 @@ class HotelActivity : Activity() {
     private var backCallback: OnBackInvokedCallback? = null
     private var returnToTranslation = false
     private var audioState = "off"
+    private var fleet: FleetAgent? = null
+    private var fleetConfigurationApplying = false
+    private var fleetUpdateState = "idle"
     private var lastActivity = 0L
     private val watchdog = object : Runnable {
         override fun run() {
@@ -73,8 +76,12 @@ class HotelActivity : Activity() {
     }
 
     private fun backendConfigured() = hotelConnection.load() != null
-    private fun canInstallUpdate(): Boolean = foreground && !destroyed && owner.current == null &&
+    private fun canInstallUpdate(): Boolean = foreground && !destroyed && !fleetConfigurationApplying && owner.current == null &&
         !owner.closing && audioState == "off" && !DuplexAudio.hasUnreleasedResources()
+    private fun reportFleetState() {
+        fleet?.update(FleetRuntimeState(foreground, owner.current?.request?.mode ?: "idle",
+            audioState, owner.current != null || owner.closing || fleetConfigurationApplying, fleetUpdateState))
+    }
     private fun current(lease: SessionOwner.Lease) = owner.accepts(lease.request.id, lease.generation)
     private fun scoped(lease: SessionOwner.Lease, message: JSONObject) = message
         .put("session_id", lease.request.id).put("generation", lease.generation)
@@ -108,6 +115,7 @@ class HotelActivity : Activity() {
     }
 
     private fun begin(request: SessionOwner.Request) {
+        if (fleetConfigurationApplying) { notice("Hotel settings are being saved. Please start again in a moment."); return }
         if (updater.isInstalling()) {
             reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
                 .put("session_id", request.id).put("generation", 0))
@@ -127,6 +135,7 @@ class HotelActivity : Activity() {
         val lease = owner.acquire(request) ?: run { notice("Wait until the previous microphone release is confirmed before starting again."); return }
         lastActivity = SystemClock.elapsedRealtime()
         audioState = "off"
+        reportFleetState()
         phase(lease, "connecting")
         audio(lease, "off")
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -152,13 +161,14 @@ class HotelActivity : Activity() {
                 val type = event.optString("type")
                 if (type == "voice_diagnostics") {
                     VoiceDiagnostics.recordMetrics(lease.generation, event)
+                    fleet?.recordMetrics(event)
                     return@eventSink
                 }
                 if (type == "reception_event" && event.optString("phase") == "listening" && request.mode == "reception") {
                     VoiceDiagnostics.recordMetrics(lease.generation, JSONObject()
                         .put("provider", "Cartesia").put("host", "api.cartesia.ai"))
                 }
-                if (type == "audio_state") audioState = event.optString("state", "unknown")
+                if (type == "audio_state") { audioState = event.optString("state", "unknown"); reportFleetState() }
                 if (type == "translation_text" || type == "assistant_text" ||
                     (type == "energy" && event.optDouble("level") > 0.05)) lastActivity = SystemClock.elapsedRealtime()
                 if (type == "reception_event" && event.optString("phase") in listOf("error", "ended")) {
@@ -182,19 +192,23 @@ class HotelActivity : Activity() {
         if (done != null) afterRelease.add(done)
         val lease = owner.beginClose()
         if (lease == null) { if (owner.current == null) finishReleaseActions(); return }
+        if (reason == "error") fleet?.recordAudioFailure()
         pendingMicrophone = null
         connectingLease = null
         gateway?.end()
         phase(lease, "ending")
         audioState = "stopping"
+        reportFleetState()
         audio(lease, "stopping")
         val oldVoice = voice.also { voice = null }
         val released: (Boolean) -> Unit = { knownOff ->
             runOnUiThread {
                 if (owner.current == lease && owner.closing) {
                     audioState = if (knownOff) "off" else "unknown"
+                    if (!knownOff) fleet?.recordAudioFailure()
                     audio(lease, audioState)
                     owner.released(lease, knownOff)
+                    reportFleetState()
                     phase(lease, if (knownOff) reason else "error", if (knownOff) text else "Audio cleanup could not be confirmed. Reopen the app before restarting.")
                     if (knownOff) finishReleaseActions() else afterRelease.clear()
                 }
@@ -241,6 +255,17 @@ class HotelActivity : Activity() {
     }
 
     private fun onUpdate(status: String) {
+        fleetUpdateState = when {
+            status.startsWith("offer:") || status.startsWith("waiting:") -> "ready"
+            status.startsWith("progress:") -> "progress"
+            status.startsWith("confirm:") -> "confirmation_required"
+            status.startsWith("installed") -> "installed"
+            status.startsWith("failed:") -> "failed"
+            status.startsWith("checking:") -> "checking"
+            status.startsWith("current:") -> "current"
+            else -> "unknown"
+        }
+        reportFleetState()
         val page = reception ?: return
         when {
             status.startsWith("checking:") -> page.push(JSONObject().put("type", "update_status").put("phase", "checking").put("text", "Checking for updates…"))
@@ -368,11 +393,24 @@ class HotelActivity : Activity() {
         setContentView(FrameLayout(this).apply { addView(reception, FrameLayout.LayoutParams(-1, -1)) })
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         night = deck.getBoolean("reception_night", false)
+        fleet = FleetAgent(this,
+            reserveIdle = {
+                if (canInstallUpdate()) { fleetConfigurationApplying = true; reportFleetState(); true } else false
+            },
+            releaseIdle = {
+                fleetConfigurationApplying = false
+                if (!destroyed) { pushState(); reportFleetState(); updater.tryInstallIfIdle() }
+            },
+            checkUpdate = {
+                if (canInstallUpdate()) { updater.check(); true } else false
+            })
         ui.post(watchdog)
     }
     override fun onResume() {
         super.onResume()
         foreground = true
+        reportFleetState()
+        fleet?.foreground()
         reception?.setShown(true)
         pushState()
         if (returnToTranslation) {
@@ -395,6 +433,8 @@ class HotelActivity : Activity() {
     }
     override fun onPause() {
         foreground = false
+        reportFleetState()
+        fleet?.background()
         ui.removeCallbacks(updatePoll)
         if (!permissionDialog) {
             stopSession()
@@ -430,6 +470,7 @@ class HotelActivity : Activity() {
 
     override fun onDestroy() {
         destroyed = true
+        fleet?.close()
         if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         ui.removeCallbacks(watchdog)
         ui.removeCallbacks(updatePoll)
