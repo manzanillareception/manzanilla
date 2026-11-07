@@ -28,6 +28,12 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   const receive = event => win.manzania.receive(event);
   const click = selector => { const node = doc.querySelector(selector); assert(node && !node.disabled, selector); node.click(); };
   const styles = selector => { const node = doc.querySelector(selector); assert(node, `Styled element exists: ${selector}`); return win.getComputedStyle(node); };
+  const visible = selector => { const node = doc.querySelector(selector); return !!node && !node.hidden && win.getComputedStyle(node).display !== 'none' && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0; };
+  const noUpdateOverlay = () => {
+    assert(!visible('#notifications-toggle') && !visible('#notifications-panel'), 'The update bell and its panel are confined to home');
+    assert(!doc.querySelector('#update-offer') && !visible('.update-offer'), 'Voice views contain no update banner');
+    assert(doc.getElementById('toast').hidden, 'Update events do not open a voice-view toast');
+  };
   const contrast = (foreground, background) => {
     const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(value => {
       const channel = Number(value) / 255;
@@ -80,9 +86,19 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   receive({ ...scope, type: 'audio_state', state: 'recording' });
   receive({ ...scope, type: 'reception_event', phase: 'listening' });
   const translatedText = 'Guten Morgen.\nGood morning.';
-  receive({ ...scope, type: 'translation_text', text: translatedText, final: false });
-  assert(doc.querySelector('.live-transcript-text')?.textContent === translatedText, 'Translation stream is visible before palette checks');
-  assert(doc.querySelectorAll('.live-transcript').length === 1 && !doc.querySelector('.caption-side,.caption-guest,.caption-reception'), 'Translation has one centered stream without speaker sides');
+  receive({ ...scope, type: 'translation_text', turn_id: 'appearance-turn', operation: 'append', text: translatedText, final: false });
+  assert(doc.querySelector('.live-transcript-text[data-turn-id="appearance-turn"]')?.textContent === translatedText, 'Translation stream is visible before palette checks');
+  receive({ ...scope, type: 'translation_text', turn_id: 'appearance-second', text: 'A second response stays on its own line.', final: true });
+  receive({ ...scope, type: 'translation_text', turn_id: 'appearance-third', text: 'Une troisième réponse.', final: true });
+  const initialClip = doc.querySelector('.session-scroll').getBoundingClientRect();
+  const backButton = doc.querySelector('.translate-back').getBoundingClientRect();
+  assert([...doc.querySelectorAll('.live-transcript-text')].every(node => {
+    const rect = node.getBoundingClientRect();
+    const overlapsBack = rect.left < backButton.right && rect.right > backButton.left && rect.top < backButton.bottom && rect.bottom > backButton.top;
+    return rect.top >= initialClip.top - 1 && rect.bottom <= initialClip.bottom + 1 && !overlapsBack;
+  }), 'The initial three response rows are fully visible and do not overlap Back');
+
+  assert(doc.querySelectorAll('.live-transcript').length === 1 && !doc.querySelector('.caption-side,.caption-guest,.caption-reception'), 'Translation has one centered response without speaker sides');
   assert(styles('.pair-title').color === 'rgb(38, 38, 36)', 'Active translation heading uses day palette');
   assert(styles('.live-transcript-text').color === 'rgb(38, 38, 36)', 'Day translation text is readable');
   assert(contrast(styles('.live-transcript-text').color, styles('.live-transcript').backgroundColor) >= 4.5, 'Day translation text meets normal-text contrast');
@@ -100,5 +116,41 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
     const rect = doc.querySelector(selector).getBoundingClientRect();
     assert(rect.left >= 0 && rect.right <= win.innerWidth + 1 && rect.top >= 0 && rect.bottom <= win.innerHeight + 1, `Translation control fits viewport: ${selector}`);
   }
-  return { frame, receive, sent, scope, result: 'PASS: day/night controls, palette, native preference replay and translation navigation' };
+  const liveResponse = doc.querySelector('.live-transcript-text[data-turn-id="appearance-turn"]');
+  receive({ type: 'update', version: '99.0.0' });
+  noUpdateOverlay();
+  receive({ type: 'update_status', version: '99.0.0', phase: 'progress', text: 'Synthetic update download', percent: 50 });
+  noUpdateOverlay();
+  receive({ type: 'update_status', version: '99.0.0', phase: 'ready', text: 'Synthetic update is ready.' });
+  noUpdateOverlay();
+  assert(doc.querySelector('.live-transcript-text[data-turn-id="appearance-turn"]') === liveResponse && liveResponse.textContent === translatedText, 'Queued update states preserve the existing translation response');
+  receive({ type: 'visibility', visible: false });
+  receive({ ...scope, type: 'audio_state', state: 'off' });
+  receive({ type: 'visibility', visible: true });
+  assert(visible('#notifications-toggle') && !visible('#notifications-panel'), 'Returning home reveals the bell without opening a panel');
+  click('#notifications-toggle');
+  assert(visible('#notifications-panel') && doc.querySelector('#update-notification')?.dataset.phase === 'ready', 'The home notification panel retains the queued ready update');
+  assert(doc.querySelector('#update-notification').textContent.includes('Synthetic update is ready.'), 'The notification panel shows the queued update message');
+  click('#update-notification');
+  assert(sent.at(-1).action === 'apply_update', 'Applying an update is an explicit action from the home notification panel');
+  click('[data-action="reception"]');
+  assert(!visible('#notifications-panel') && !visible('#notifications-toggle'), 'Navigating away from home closes the notification panel');
+  click('[data-action="assist-go"]');
+  const receptionStart = sent.filter(event => event.action === 'start').at(-1);
+  const receptionScope = { session_id: receptionStart.session_id, generation: 1 };
+  receive({ ...receptionScope, type: 'audio_state', state: 'recording' });
+  receive({ ...receptionScope, type: 'reception_event', phase: 'listening' });
+  receive({ ...receptionScope, type: 'assistant_text', text: 'How can I help with your stay?', final: true });
+  const assistantResponse = doc.querySelector('.live-transcript-text');
+  receive({ type: 'update_status', version: '99.0.0', phase: 'confirm', text: 'Synthetic installer is ready.' });
+  noUpdateOverlay();
+  assert(doc.querySelector('.live-transcript-text') === assistantResponse && assistantResponse.textContent === 'How can I help with your stay?', 'Update notices preserve the active assistant response');
+  receive({ type: 'visibility', visible: false });
+  receive({ ...receptionScope, type: 'audio_state', state: 'off' });
+  receive({ type: 'visibility', visible: true });
+  click('#notifications-toggle');
+  assert(visible('#notifications-panel') && doc.querySelector('#update-notification')?.dataset.phase === 'confirm', 'Assistant-time update status is retained in the home panel');
+  click('#check-updates');
+  assert(sent.at(-1).action === 'check_updates', 'Checking updates is an explicit action inside the home notification panel');
+  return { frame, receive, sent, scope, result: 'PASS: day/night palette, centered response preservation, native preferences and home-only update notifications' };
 }

@@ -147,9 +147,17 @@ class HotelActivity : Activity() {
             if (request.mode == "translation") OpenAiTranslationTransport(key,
                 DeskLanguages.english(request.guest), DeskLanguages.english(request.staff), listener)
             else CartesiaNightTransport(key, BuildConfig.CARTESIA_AGENT_ID, context, listener)
-        }, nightTools, push = { event ->
+        }, nightTools, push = eventSink@ { event ->
             if (current(lease)) {
                 val type = event.optString("type")
+                if (type == "voice_diagnostics") {
+                    VoiceDiagnostics.recordMetrics(lease.generation, event)
+                    return@eventSink
+                }
+                if (type == "reception_event" && event.optString("phase") == "listening" && request.mode == "reception") {
+                    VoiceDiagnostics.recordMetrics(lease.generation, JSONObject()
+                        .put("provider", "Cartesia").put("host", "api.cartesia.ai"))
+                }
                 if (type == "audio_state") audioState = event.optString("state", "unknown")
                 if (type == "translation_text" || type == "assistant_text" ||
                     (type == "energy" && event.optDouble("level") > 0.05)) lastActivity = SystemClock.elapsedRealtime()

@@ -6,53 +6,45 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
 class NativeVoiceAttemptTest {
-    @Test fun errorIsTerminalAndCannotBecomeEnded() {
+    @Test fun errorIsTerminalAndCannotBecomeEndedOrReady() {
         val attempt = NativeVoiceAttempt()
+        assertTrue(attempt.markReady())
+        assertTrue(attempt.ready)
         assertTrue(attempt.finish(error = true))
         assertFalse(attempt.active())
+        assertFalse(attempt.ready)
         assertTrue(attempt.failed)
         assertFalse(attempt.finish())
+        assertFalse(attempt.markReady())
         assertTrue(attempt.failed)
-        assertEquals(NativeVoiceAttempt.Reservation.DROPPED, attempt.reservePcm(640, 32000))
     }
 
-    @Test fun releasedCallbacksRestoreOnlyTheirOwnBudget() {
-        val attempt = NativeVoiceAttempt()
-        assertEquals(NativeVoiceAttempt.Reservation.ACCEPTED, attempt.reservePcm(32000, 32000))
-        attempt.releasePcm(32000)
-        assertEquals(NativeVoiceAttempt.Reservation.ACCEPTED, attempt.reservePcm(32000, 32000))
-        assertEquals(NativeVoiceAttempt.Reservation.OVERFLOW, attempt.reservePcm(2, 32000))
-        attempt.releasePcm(32000)
-        // Once overflow is reported, more provider callbacks cannot queue more errors.
-        assertEquals(NativeVoiceAttempt.Reservation.DROPPED, attempt.reservePcm(2, 32000))
-    }
-
-    @Test fun concurrentProviderCallbacksCannotExceedThePcmLimit() {
+    @Test fun concurrentTerminationHasExactlyOneOwner() {
         val attempt = NativeVoiceAttempt()
         val start = CountDownLatch(1)
-        val accepted = AtomicInteger()
-        val overflow = AtomicInteger()
+        val terminal = AtomicInteger()
         val workers = List(16) {
             Thread {
                 start.await()
-                when (attempt.reservePcm(4000, 32000)) {
-                    NativeVoiceAttempt.Reservation.ACCEPTED -> accepted.incrementAndGet()
-                    NativeVoiceAttempt.Reservation.OVERFLOW -> overflow.incrementAndGet()
-                    NativeVoiceAttempt.Reservation.DROPPED -> Unit
-                }
+                if (attempt.finish()) terminal.incrementAndGet()
             }.apply { start() }
         }
         start.countDown()
         workers.forEach { it.join(2000); assertFalse(it.isAlive) }
-        assertEquals(8, accepted.get())
-        assertEquals(1, overflow.get())
+        assertEquals(1, terminal.get())
+        assertFalse(attempt.active())
     }
 
-    @Test fun oversizedOrInvalidFramesFailWithoutRetainingPcm() {
-        for (bytes in listOf(-2, 0, 3, 32002, Int.MAX_VALUE)) {
-            val attempt = NativeVoiceAttempt()
-            assertEquals(NativeVoiceAttempt.Reservation.OVERFLOW, attempt.reservePcm(bytes, 32000))
-            assertEquals(NativeVoiceAttempt.Reservation.DROPPED, attempt.reservePcm(640, 32000))
-        }
+    @Test fun metersCoalesceWhileUiIsStalledAndKeepLatestLevel() {
+        val attempt = NativeVoiceAttempt()
+        assertTrue(attempt.reserveEnergy(0.1f, 0))
+        repeat(200) { assertFalse(attempt.reserveEnergy(0.8f, (it + 1L) * 1_000_000)) }
+        assertEquals(0.8f, attempt.level, 0f)
+        attempt.releaseEnergy()
+        assertTrue(attempt.reserveEnergy(0.2f, 201_000_000))
+        attempt.releaseEnergy()
+        assertFalse(attempt.reserveEnergy(0.3f, 202_000_000))
+        attempt.finish()
+        assertFalse(attempt.reserveEnergy(0.4f, 1_000_000_000))
     }
 }

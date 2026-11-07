@@ -3,9 +3,11 @@ package com.agentdeck.hotel
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
-/** Includes the packet being written, so dequeueing cannot bypass the latency budget. */
-internal class PcmPlaybackQueue(private val maximumBytes: Int, maximumPackets: Int = 128) {
-    data class Packet internal constructor(val epoch: Long, val pcm: ByteArray)
+/** Counts every unwritten byte, including the packet being written, against the speech backlog. */
+internal class PcmPlaybackQueue(private val maximumBytes: Int, maximumPackets: Int = 512) {
+    class Packet internal constructor(val epoch: Long, val pcm: ByteArray) {
+        internal var remaining = pcm.size
+    }
 
     private val lock = Any()
     private val packets = ArrayBlockingQueue<Packet>(maximumPackets)
@@ -31,9 +33,17 @@ internal class PcmPlaybackQueue(private val maximumBytes: Int, maximumPackets: I
 
     fun isCurrent(packet: Packet): Boolean = synchronized(lock) { packet.epoch == epoch }
 
+    /** Successful native writes free their own bytes immediately, including a partial large chunk. */
+    fun consumed(packet: Packet, count: Int) = synchronized(lock) {
+        require(count >= 0 && count % 2 == 0 && count <= packet.remaining)
+        packet.remaining -= count
+        if (packet.epoch == epoch) pending -= count
+    }
+
     fun complete(packet: Packet) {
         synchronized(lock) {
-            if (packet.epoch == epoch) pending = (pending - packet.pcm.size).coerceAtLeast(0)
+            if (packet.epoch == epoch) pending -= packet.remaining
+            packet.remaining = 0
         }
         packet.pcm.fill(0)
     }

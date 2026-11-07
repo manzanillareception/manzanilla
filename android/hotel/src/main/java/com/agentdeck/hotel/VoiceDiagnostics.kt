@@ -1,5 +1,7 @@
 package com.agentdeck.hotel
 
+import org.json.JSONObject
+
 /**
  * In-memory diagnostic timeline for the private test build.
  * Timestamps and event endpoint names only: never audio, transcripts, captions,
@@ -19,6 +21,38 @@ internal object VoiceDiagnostics {
 
     private val lock = Any()
     private val entries = ArrayDeque<Entry>()
+    private val connections = ArrayDeque<String>()
+    private val timingFields = listOf("connection_ready_ms", "native_audio_start_ms",
+        "max_upload_queue_audio_ms", "max_local_receive_dispatch_ms",
+        "stream_start_to_first_output_event_ms", "pcm_arrival_to_first_write_ms",
+        "pcm_arrival_to_playback_head_ms", "queued_audio_ms")
+
+    /** Only fixed identities and numeric timings enter this local, ephemeral view. */
+    fun recordMetrics(generation: Int, metrics: JSONObject) = synchronized(lock) {
+        val lines = ArrayList<String>()
+        if (metrics.optString("provider") == "OpenAI" && metrics.optString("host") == "api.openai.com") {
+            lines.add("OpenAI · api.openai.com · requested model gpt-live-1 · WebSocket ready")
+        } else if (metrics.optString("provider") == "Cartesia" && metrics.optString("host") == "api.cartesia.ai") {
+            lines.add("Cartesia · api.cartesia.ai · managed voice agent")
+        }
+        for (name in timingFields) {
+            val value = metrics.opt(name) as? Number ?: continue
+            val numeric = value.toDouble()
+            if (numeric.isFinite() && numeric in 0.0..3_600_000.0) lines.add("$name: ${numeric.toLong()} ms")
+        }
+        if (lines.isNotEmpty()) {
+            while (connections.size >= 120) connections.removeFirst()
+            connections.addLast("Session $generation\n" + lines.joinToString("\n"))
+        }
+    }
+
+    private fun renderConnections(): String = synchronized(lock) {
+        if (connections.isEmpty()) "" else "Connection diagnostics\n" +
+            "Device preparation, transport startup and PCM playback timings are separate measurements. " +
+            "They are not end-to-end speech translation latency or acoustic measurements. " +
+            "No key, speech, audio or account data is recorded. Entries clear when the app process closes.\n\n" +
+            connections.joinToString("\n\n")
+    }
 
     fun record(sessionId: String, generation: Int, point: AudioTurnTiming.Point) {
         synchronized(lock) {
@@ -29,12 +63,13 @@ internal object VoiceDiagnostics {
         }
     }
 
-    fun clear() = synchronized(lock) { entries.clear() }
+    fun clear() = synchronized(lock) { entries.clear(); connections.clear() }
 
     /** One text block per session, times relative to that session's first event. */
     fun render(): String {
         val all = synchronized(lock) { entries.toList() }
-        if (all.isEmpty()) return "No diagnostic events yet. Run a translation session, then return here."
+        val connectionText = renderConnections()
+        if (all.isEmpty()) return connectionText.ifEmpty { "No diagnostic events yet. Run a translation session, then return here." }
         val out = StringBuilder()
         out.append("Voice diagnostics (test build)\n")
         out.append("Times are milliseconds from each session's first event. Speech boundaries are RMS estimates, ")
@@ -51,6 +86,6 @@ internal object VoiceDiagnostics {
                     out.append('\n')
                 }
             }
-        return out.toString()
+        return out.toString() + if (connectionText.isNotEmpty()) "\n\n$connectionText" else ""
     }
 }

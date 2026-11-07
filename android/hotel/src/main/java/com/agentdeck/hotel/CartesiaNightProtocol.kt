@@ -39,7 +39,8 @@ internal class CartesiaNightProtocol(private val hotelContext: String) {
         // {{hotel_context}} and register client tools; these are not per-call config overrides.
         return JSONObject().put("type", "session_create")
             .put("audio", JSONObject().put("input_format", "pcm_16000")
-                // Server pacing prevents generated speech from arriving faster than native playout.
+                // Request provider pacing. Native playout must still buffer multi-second frames
+                // and network bursts; this mode does not promise a maximum frame duration.
                 .put("output_delivery", OUTPUT_DELIVERY).put("continuous_input", true))
             .put("dynamic_variables", JSONObject().put("hotel_context", boundedUtf8(hotelContext, 20_000)))
             .toString()

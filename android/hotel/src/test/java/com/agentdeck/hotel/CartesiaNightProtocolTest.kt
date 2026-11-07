@@ -63,6 +63,21 @@ class CartesiaNightProtocolTest {
         assertTrue(protocol.receive(audio(1, 2)).isEmpty())
     }
 
+    @Test fun `paced delivery accepts multi-second audio frames while microphone and tools stay live`() {
+        val protocol = ready(CartesiaNightProtocol(""))
+        // A server pacing request is not a one-second maximum PCM frame contract.
+        val greeting = ByteArray(CartesiaNightProtocol.SAMPLE_RATE * 2 * 3) { (it % 251).toByte() }
+        val frame = JSONObject().put("type", "audio_output")
+            .put("audio", Base64.getEncoder().encodeToString(greeting)).toString()
+        val event = protocol.receive(frame).single() as CartesiaNightProtocol.Event.Audio
+        assertArrayEquals(greeting, event.pcm)
+        assertNotNull(protocol.audioInput(ByteArray(640)))
+        assertTrue(protocol.receive(tool("during-greeting", "get_hotel_context")).single() is CartesiaNightProtocol.Event.ToolCall)
+        assertEquals(listOf(CartesiaNightProtocol.Event.Interrupted), protocol.receive("""{"type":"audio_output_clear"}"""))
+        val next = protocol.receive(audio(7, 0)).single() as CartesiaNightProtocol.Event.Audio
+        assertArrayEquals(byteArrayOf(7, 0), next.pcm)
+    }
+
     @Test fun `duplicate taxi tools execute once and replay only the original result`() {
         val protocol = ready(CartesiaNightProtocol(""))
         assertTrue(protocol.receive(tool("taxi-1", "confirm_taxi")).single() is CartesiaNightProtocol.Event.ToolCall)
