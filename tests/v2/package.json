@@ -1,0 +1,9 @@
+{
+  "name": "manzanilla-v2-tests",
+  "private": true,
+  "description": "Dev-only dependencies for the V2 backend boundary tests. Kept out of the root manifest so non-release backend work does not trip the release policy.",
+  "devDependencies": {
+    "miniflare": "^4.20260730.0",
+    "ws": "^8.22.1"
+  }
+}

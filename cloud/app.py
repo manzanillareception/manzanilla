@@ -3,15 +3,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from .db import Store
 from .models import Hotel, BookingLookup
 from .gateway import Gateway
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
-from .livekit_route import mint as livekit_mint, end as end_livekit
-from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
 from typing import Literal
 
@@ -23,11 +21,10 @@ edge_pending = {}
 active_devices = set()
 device_connections = {}
 
-# The live audio route is the Fish interpreter; there is no fallback
-# to another provider. Managed session minting requires the server FISH_API_KEY.
-# The legacy generic relay route stays disabled; staff-led HTTP operations remain available.
+# Live audio remains disabled until an approved replacement is integrated.
+# Staff-led HTTP operations remain available independently of voice providers.
 GENERIC_RELAY_ENABLED = False
-GENERIC_RELAY_BLOCK_REASON = 'This voice route is disabled: the approved interpreter route is the managed Fish session endpoint. Use staff-led reception actions or ask hotel staff; no fallback was started.'
+GENERIC_RELAY_BLOCK_REASON = 'Live audio is unavailable in this service. Use staff-led reception actions or ask hotel staff.'
 
 def require_generic_relay():
     if not GENERIC_RELAY_ENABLED: raise HTTPException(503,GENERIC_RELAY_BLOCK_REASON)
@@ -84,11 +81,7 @@ async def revoke(ident: str):
     async def close(ws):
         try: await ws.close(code=4401)
         except (RuntimeError,WebSocketDisconnect): pass
-    results = await asyncio.gather(revoke_sessions(store,ident),*(close(ws) for ws in closing))
-    # Revocation of the credential succeeds independently of upstream room
-    # cleanup. Preserve the retryable lease and tell staff when cleanup is pending.
-    if not results[0]:
-        return JSONResponse(status_code=202, content={'status':'revoked','voice_cleanup':'pending'})
+    await asyncio.gather(*(close(ws) for ws in closing))
     return {'status':'revoked'}
 
 @app.get('/api/hotels/{hid}/overview')
@@ -171,30 +164,6 @@ async def operations_confirm(sid: str, value: Confirmation, authorization: str =
 @app.post('/api/device/operations/{sid}/end')
 def operations_end(sid: str, authorization: str = Header(default='')):
     return Operations(store,edge_execute).end(device_auth(authorization),sid)
-
-@app.post('/api/device/fish-session')
-async def fish_session(value: FishSession, authorization: str = Header(default='')):
-    try: dev = device_auth(authorization)
-    except HTTPException as exc:
-        exc.headers = NOT_CREATED
-        raise
-    if os.getenv('VOICE_ROUTE','fish') == 'livekit':
-        return await livekit_mint(store,dev,value)
-    return await mint(store,dev,value)
-
-@app.post('/api/device/fish-session/{session_id}/end')
-async def fish_session_end(session_id: str, authorization: str = Header(default='')):
-    dev = device_auth(authorization)
-    rows = store.rows('SELECT route FROM fish_sessions WHERE session_id=? AND device=? AND hotel=?',
-                      (session_id, dev['id'], dev['hotel']))
-    if not rows: raise HTTPException(404, 'Interpreter session not found')
-    if rows[0]['route'] == 'livekit': return await end_livekit(store,dev,session_id)
-    if rows[0]['route'] == 'fish': return await end_fish(store,dev,session_id)
-    raise HTTPException(503, 'Interpreter session unavailable')
-
-@app.post('/api/device/fish-session-requests/{request_id}/end')
-async def fish_session_request_end(request_id: str, authorization: str = Header(default='')):
-    return await end_fish_request(store,device_auth(authorization),request_id)
 
 @app.post('/api/device/session')
 def session(value: VoiceSession, authorization: str = Header(default='')):

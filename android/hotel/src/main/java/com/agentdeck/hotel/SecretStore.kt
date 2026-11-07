@@ -16,7 +16,7 @@ class SecretStore(ctx: Context, prefsName: String = "gem") {
     enum class Status { ABSENT, READY, ERROR }
 
     companion object {
-        // Existing Gemini and Fish entries share this alias. Do not rotate it during migration.
+        // Existing encrypted entries share this alias. Do not rotate it during migration.
         private const val ALIAS = "manz_gem"
         private val lock = Any()
     }

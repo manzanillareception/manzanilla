@@ -1,0 +1,30 @@
+# V2 worker config - NOT DEPLOYED. Separate worker name so the live manz-webtest
+# pilot is untouched. Deploy only after an explicit owner decision.
+name = "manz-v2"
+main = "src/v2/worker.js"
+compatibility_date = "2025-10-01"
+workers_dev = true
+
+[vars]
+# Comma-separated Google OAuth client IDs (web test client + Android client).
+# PLACEHOLDERS - real values come from the owner's Google Cloud project.
+GOOGLE_CLIENT_IDS = "REPLACE_WITH_WEB_CLIENT_ID,REPLACE_WITH_ANDROID_CLIENT_ID"
+# Lowercased admin emails allowed to approve/revoke users.
+ADMIN_EMAILS = "REPLACE_WITH_OWNER_EMAIL"
+CARTESIA_AGENT_NIGHT = "agent_gKPCioSa99LcdABjCEKLX7"
+CARTESIA_VERSION = "2026-08-14"
+V2_DAILY_SESSION_CAP = "10"
+
+# Secrets set out of band (never committed):
+#   wrangler secret put CARTESIA_API_KEY --config wrangler.v2.toml
+#   wrangler secret put SESSION_SECRET  --config wrangler.v2.toml   (random, >= 32 chars)
+
+[durable_objects]
+bindings = [{ name = "USERS", class_name = "UsersDO" }]
+
+[[migrations]]
+tag = "v2-1"
+new_sqlite_classes = ["UsersDO"]
+
+[observability.logs]
+enabled = true

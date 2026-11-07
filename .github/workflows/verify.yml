@@ -6,18 +6,6 @@ on:
   workflow_dispatch:
   workflow_call:
 jobs:
-  fish-auth:
-    # This one-off check is restricted to the release branch; other PRs do not
-    # receive the repository secret or depend on provider availability.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/embed-fish-test-17-0-37'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify Fish account access without creating a session
-        env:
-          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
-        run: python3 scripts/check_fish_auth.py
   cloud:
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +18,6 @@ jobs:
       - run: npm run check:reception
       - run: node --test tests/*.test.cjs
       - run: pip install -r requirements-dev.txt
-      - run: pip install -r voice-worker/requirements.txt
       - run: python -m pytest tests -q
       - run: pip install -r requirements-browser.txt
       - run: python -m playwright install --with-deps chromium

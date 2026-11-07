@@ -10,7 +10,8 @@
 3. text_only_provisional is provisional: it does NOT prove unsent TTS or empty generation;
    hasText=false means only "no observed text/audio in window".
 4. Detection only: no user-visible behavior, no retry/repair action is taken on fire.
-5. The Fish Audio /api/session -> /mint route is dead code for the deployed web page but
-   reachable directly; other clients (Android) unknown - do not remove on web evidence alone.
+5. The legacy /api/session and /api/session/end routes are retired with HTTP 410.
+   Existing clients must use a supported configured interface; no replacement is selected.
+   The old BudgetDO storage is retained without exposing its retired mint/reset paths.
 6. This branch does NOT repair the Spanish recognition failure. Effective recognizer and
    language bounding remain unverified pending provider answer.
