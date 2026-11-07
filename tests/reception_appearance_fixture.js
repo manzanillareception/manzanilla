@@ -27,7 +27,7 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   }
   const receive = event => win.manzania.receive(event);
   const click = selector => { const node = doc.querySelector(selector); assert(node && !node.disabled, selector); node.click(); };
-  const styles = selector => win.getComputedStyle(doc.querySelector(selector));
+  const styles = selector => { const node = doc.querySelector(selector); assert(node, `Styled element exists: ${selector}`); return win.getComputedStyle(node); };
   const contrast = (foreground, background) => {
     const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(value => {
       const channel = Number(value) / 255;
@@ -41,7 +41,7 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
     assert(styles('body').backgroundColor === background, `${value} page background is correct`);
     assert(styles('html').colorScheme === value, `${value} native form controls use the matching scheme`);
   };
-  receive({ type: 'reception_info', audio_available: true, local_audio_state: 'off' });
+  receive({ type: 'reception_info', translation_available: true, reception_available: true, openai_configured: true, local_audio_state: 'off' });
   receive({ type: 'language_preferences', language: 'de', staff_language: 'en' });
   palette('dark', 'rgb(8, 15, 21)');
   click('[data-action="appearance"]');
@@ -79,20 +79,24 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   const scope = { session_id: start.session_id, generation: 1 };
   receive({ ...scope, type: 'audio_state', state: 'recording' });
   receive({ ...scope, type: 'reception_event', phase: 'listening' });
-  receive({ ...scope, type: 'interpretation', utterance_id: 'day-caption', source_language: 'de', original: 'Guten Morgen.', text: 'Good morning.', language_attribution: 'model' });
+  const translatedText = 'Guten Morgen.\nGood morning.';
+  receive({ ...scope, type: 'translation_text', text: translatedText, final: false });
+  assert(doc.querySelector('.live-transcript-text')?.textContent === translatedText, 'Translation stream is visible before palette checks');
+  assert(doc.querySelectorAll('.live-transcript').length === 1 && !doc.querySelector('.caption-side,.caption-guest,.caption-reception'), 'Translation has one centered stream without speaker sides');
   assert(styles('.pair-title').color === 'rgb(38, 38, 36)', 'Active translation heading uses day palette');
-  assert(styles('.caption').color === 'rgb(38, 38, 36)', 'Day captions are readable');
-  assert(contrast(styles('.caption .translated').color, styles('.caption').backgroundColor) >= 4.5, 'Day translated captions meet normal-text contrast');
-  const count = doc.querySelectorAll('.caption').length;
+  assert(styles('.live-transcript-text').color === 'rgb(38, 38, 36)', 'Day translation text is readable');
+  assert(contrast(styles('.live-transcript-text').color, styles('.live-transcript').backgroundColor) >= 4.5, 'Day translation text meets normal-text contrast');
+  const count = doc.querySelectorAll('.live-transcript').length;
   receive({ type: 'night_mode', enabled: false });
-  assert(doc.querySelector('#content').dataset.page === 'active' && doc.querySelectorAll('.caption').length === count, 'Preference replay preserves active translation');
+  assert(doc.querySelector('#content').dataset.page === 'active' && doc.querySelectorAll('.live-transcript').length === count && doc.querySelector('.live-transcript-text').textContent === translatedText, 'Preference replay preserves active translation and exact stream content');
   receive({ type: 'appearance', value: 'invalid' });
   palette('light', 'rgb(243, 245, 242)');
   receive({ type: 'appearance', value: 'dark' });
   palette('dark', 'rgb(8, 15, 21)');
   assert(styles('.pair-title').color === 'rgb(243, 241, 233)', 'Active heading returns to night palette');
-  assert(contrast(styles('.caption .translated').color, styles('.caption').backgroundColor) >= 4.5, 'Night translated captions meet normal-text contrast');
-  for (const selector of ['.pair-title', '.voice-ball', '#privacy']) {
+  assert(contrast(styles('.live-transcript-text').color, styles('.live-transcript').backgroundColor) >= 4.5, 'Night translation text meets normal-text contrast');
+  assert(doc.querySelector('.live-transcript-text').textContent === translatedText, 'Appearance changes preserve exact streamed text');
+  for (const selector of ['.pair-title', '.live-transcript', '.voice-ball', '#privacy']) {
     const rect = doc.querySelector(selector).getBoundingClientRect();
     assert(rect.left >= 0 && rect.right <= win.innerWidth + 1 && rect.top >= 0 && rect.bottom <= win.innerHeight + 1, `Translation control fits viewport: ${selector}`);
   }
