@@ -26,6 +26,13 @@ class SessionOwner {
     }
 
 
+    /** A user can cancel the exact new UUID before the UI receives its generation. */
+    fun acceptsCancellation(id: String, epoch: Int?): Boolean {
+        val lease = current ?: return false
+        return lease.request.id == id && (epoch == null || lease.generation == epoch)
+    }
+
+
     fun beginClose(): Lease? {
         if (closing) return null
         val lease = current ?: return null

@@ -14,9 +14,10 @@ import java.util.concurrent.TimeUnit
 
 /** Exercises the shipped assets and real addJavascriptInterface boundary, with no audio provider. */
 internal object ReceptionWebViewFixture {
-    /** A stale or forged bridge start cannot turn on capture after provider removal. */
-    fun verifyTranslationUnavailable(instrumentation: Instrumentation) {
+    /** A stale or forged bridge start cannot turn on capture before device BYOK is saved. */
+    fun verifyTranslationMissingKey(instrumentation: Instrumentation) {
         val context = instrumentation.targetContext
+        check(SecretStore(context, "openai").status() == SecretStore.Status.ABSENT) { "Missing-key fixture requires empty synthetic app data" }
         val permissionBefore = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
         val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as HotelActivity
@@ -34,9 +35,10 @@ internal object ReceptionWebViewFixture {
                 Thread.sleep(100)
             }
             js("document.querySelector('[data-action=translation]').click()")
-            check(js("document.body.innerText.includes('Live translation is unavailable in this build.')") == "true")
+            check(js("document.body.innerText.includes('Add your OpenAI API key in Translation setup.')") == "true")
+            check(js("!!document.querySelector('[data-action=setup-translation]')") == "true")
             check(js("!document.querySelector('[data-action=start]:not([disabled])')") == "true") {
-                "Unavailable translation exposed an enabled Start button"
+                "Translation without BYOK exposed an enabled Start button"
             }
             repeat(2) {
                 instrumentation.runOnMainSync {
@@ -74,6 +76,7 @@ internal object ReceptionWebViewFixture {
             activity.addContentView(page, FrameLayout.LayoutParams(-1, -1))
             // Exercise native events queued before page initialization, not a hand-written JS bridge.
             page.push(JSONObject().put("type", "reception_info").put("audio_available", true)
+                .put("translation_available", true).put("openai_configured", true).put("reception_available", false)
                 .put("local_audio_state", "off").put("hotel_name", "Bridge fixture"))
             page.push(JSONObject().put("type", "language_preferences").put("language", "fr").put("staff_language", "en"))
             page.setShown(true)
@@ -91,7 +94,7 @@ internal object ReceptionWebViewFixture {
                 val message = messages.poll(250, TimeUnit.MILLISECONDS) ?: continue
                 if (message.optString("action") == action) return message
             }
-            error("Shipped WebView did not deliver native action: $action; page=${evaluate("document.body.innerText")}")
+            error("Shipped WebView did not deliver expected native action: $action")
         }
         try {
             expectAction("info")

@@ -9,7 +9,7 @@ internal object ReceptionBridge {
     // The old 8,192 limit silently discarded valid notes before native review.
     const val MAX_MESSAGE_CHARS = 32 * 1024
     private val actions = setOf(
-        "info", "start", "stop", "appearance", "night", "bell", "settings", "voice_setup", "languages",
+        "info", "start", "stop", "appearance", "night", "bell", "settings", "voice_setup", "night_setup", "request_location", "languages",
         "checkin", "operator", "taxi", "question", "message", "confirm", "silence",
         "activity", "mute", "exit", "apply_update", "check_updates"
     )

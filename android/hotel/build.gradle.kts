@@ -21,6 +21,10 @@ android {
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/release-metadata.json"))
         buildConfigField("String", "LEGACY_FEED_URL", javaString(project.findProperty("legacyFeedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl") || project.hasProperty("legacyFeedUrl")) "true" else "false"
+        // OpenAI is always device BYOK. Cartesia bundling is the owner's explicit V1 choice.
+        buildConfigField("String", "CARTESIA_API_KEY", javaString(""))
+        buildConfigField("String", "CARTESIA_AGENT_ID", javaString(System.getenv("CARTESIA_AGENT_NIGHT")
+            ?: project.findProperty("cartesiaAgentId") as String? ?: "agent_gKPCioSa99LcdABjCEKLX7"))
         versionName = rootProject.file("VERSION").readText().trim()
     }
     androidResources { noCompress += "wav" }
@@ -38,6 +42,11 @@ android {
     }
     buildTypes {
         release {
+            val cartesiaKey = System.getenv("CARTESIA_API_KEY").orEmpty().trim()
+            if (project.hasProperty("requireBundledCartesia")) {
+                require(cartesiaKey.isNotBlank()) { "CARTESIA_API_KEY must be supplied by the approved release secret" }
+            }
+            buildConfigField("String", "CARTESIA_API_KEY", javaString(cartesiaKey))
             isMinifyEnabled = false
             if (!System.getenv("ORANGE_KEYSTORE").isNullOrBlank()) signingConfig = signingConfigs.getByName("pilot")
         }

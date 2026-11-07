@@ -9,6 +9,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.io.File
 import java.security.KeyStore
+import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
@@ -43,18 +44,29 @@ class UpgradeDataFixture : Instrumentation() {
             // fixture also runs on the previous release, so do not link candidate
             // production classes into the test APK. Only synthetic data is used.
             val secretClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore")
-            val voiceStore = secretClass.getConstructor(Context::class.java, String::class.java)
-                .newInstance(targetContext, "upgrade-test")
-            val voiceMarker = "fixture-only-voice-$marker"
+            val openAiStore = secretClass.getConstructor(Context::class.java, String::class.java)
+                .newInstance(targetContext, "openai")
+            val openAiMarker = "fixture-only-openai-$marker"
+            val openAiFile = File(targetContext.noBackupFilesDir, "credential-" +
+                Base64.encodeToString("openai".toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) + ".enc")
+            fun ciphertextDigest(): String {
+                check(openAiFile.isFile && openAiFile.length() >= 28)
+                val bytes = openAiFile.readBytes()
+                check(!bytes.toString(Charsets.ISO_8859_1).contains(openAiMarker))
+                check(!targetContext.getSharedPreferences("openai", Context.MODE_PRIVATE).contains("k"))
+                return Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes), Base64.NO_WRAP)
+            }
 
             when (case) {
                 "seed" -> {
                     check(!fixture.contains("marker") && !file.exists() && !store.containsAlias(alias))
                     // Refuse to overwrite existing application preferences, even on an emulator.
                     check(PREFERENCES.keys.none(deck::contains))
-                    check(secretClass.getMethod("status").invoke(voiceStore).toString() == "ABSENT")
-                    check(secretClass.getMethod("save", String::class.java).invoke(voiceStore, voiceMarker) == true)
-                    check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
+                    check(!openAiFile.exists())
+                    check(secretClass.getMethod("status").invoke(openAiStore).toString() == "ABSENT")
+                    check(secretClass.getMethod("save", String::class.java).invoke(openAiStore, openAiMarker) == true)
+                    check(secretClass.getMethod("load").invoke(openAiStore) == openAiMarker)
+                    val openAiDigest = ciphertextDigest()
                     val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
                     generator.init(KeyGenParameterSpec.Builder(alias,
                         KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
@@ -69,6 +81,7 @@ class UpgradeDataFixture : Instrumentation() {
                     }
                     check(deck.edit().apply { PREFERENCES.forEach { (name, value) -> putString(name, value) } }.commit())
                     check(fixture.edit().putString("marker", marker)
+                        .putString("openai_ciphertext_sha256", openAiDigest)
                         .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
                         .putString("encrypted", Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit())
                 }
@@ -83,27 +96,39 @@ class UpgradeDataFixture : Instrumentation() {
                     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                     cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
                     check(String(cipher.doFinal(encrypted), Charsets.UTF_8) == marker)
-                    check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
-                    check(secretClass.getMethod("status").invoke(voiceStore).toString() == "READY")
+                    check(ciphertextDigest() == fixture.getString("openai_ciphertext_sha256", null))
+                    check(secretClass.getMethod("load").invoke(openAiStore) == openAiMarker)
+                    check(secretClass.getMethod("status").invoke(openAiStore).toString() == "READY")
                 }
                 "bundled" -> {
                     // Only the exact synthetic key seeded above can be removed;
                     // this instrumentation also refuses to run outside an emulator.
-                    check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
-                    secretClass.getMethod("clear").invoke(voiceStore)
-                    val absent = secretClass.getMethod("status").invoke(voiceStore)
+                    check(secretClass.getMethod("load").invoke(openAiStore) == openAiMarker)
+                    secretClass.getMethod("clear").invoke(openAiStore)
+                    val absent = secretClass.getMethod("status").invoke(openAiStore)
                     check(absent.toString() == "ABSENT")
-                    // Inspect field names only; never read or print credential values.
+                    check(!openAiFile.exists())
+                    // Cartesia bundling is the owner's V1 release choice. OpenAI stays BYOK.
+                    // Values are inspected only for presence and are never printed or returned.
                     val buildConfig = targetContext.classLoader.loadClass("com.agentdeck.hotel.BuildConfig")
-                    check(buildConfig.fields.none { it.name.endsWith("API_KEY") || it.name.endsWith("VOICE_ID") })
+                    check(buildConfig.getField("DEBUG").get(null) == false)
+                    check(buildConfig.fields.none { it.name.contains("OPENAI", ignoreCase = true) || it.name.contains("FISH", ignoreCase = true) })
+                    check(buildConfig.fields.filter { it.name.endsWith("API_KEY") }.map { it.name } == listOf("CARTESIA_API_KEY"))
+                    check((buildConfig.getField("CARTESIA_API_KEY").get(null) as String).isNotBlank())
+                    check((buildConfig.getField("CARTESIA_AGENT_ID").get(null) as String).isNotBlank())
                     val policy = targetContext.classLoader.loadClass("com.agentdeck.hotel.AudioPolicy")
-                    val gate = policy.getMethod("blockReason").invoke(policy.getField("INSTANCE").get(null))
-                    check(gate == "Live translation is unavailable in this build.")
+                    val instance = policy.getField("INSTANCE").get(null)
+                    val gate = policy.getMethod("blockReason", String::class.java, Boolean::class.javaPrimitiveType,
+                        Boolean::class.javaPrimitiveType)
+                    check(gate.invoke(instance, "translation", false, true) == "Add your OpenAI API key in Translation setup.")
+                    check(gate.invoke(instance, "translation", true, false) == "")
+                    check(gate.invoke(instance, "reception", false, true) == "")
+                    check((gate.invoke(instance, "reception", true, false) as String).isNotBlank())
                 }
                 else -> error("Unknown fixture case")
             }
-            val evidence = if (case == "bundled") "provider_fields=false translation_gate=blocked" else
-                "preferences=true private_file=true encrypted_marker=true voice_credential=true"
+            val evidence = if (case == "bundled") "openai_build_field=false cartesia_bundled=true translation_gate=missing_byok" else
+                "preferences=true private_file=true encrypted_marker=true openai_credential=true openai_ciphertext=true"
             result.putString("stream", "PASS case=$case $evidence\n")
             finish(-1, result)
         } catch (_: Throwable) {

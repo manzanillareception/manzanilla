@@ -34,6 +34,7 @@ export async function runReceptionOperationsFixture(assetBase = new URL('../andr
     target.dispatchEvent(new win.Event('input', { bubbles:true }));
   };
   const actionMessages = action => messages.filter(message => message.action === action);
+  win.manzania.receive({ type:'reception_info', translation_available:false, reception_available:true, openai_configured:false, local_audio_state:'off' });
   click('[data-action="request:message"]');
   click('[data-action="assist-go"]');
   const scope = { session_id:actionMessages('start').at(-1).session_id, generation:1 };

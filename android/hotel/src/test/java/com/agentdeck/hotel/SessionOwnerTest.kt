@@ -104,4 +104,15 @@ class SessionOwnerTest {
         }
         assertNull(interpreter.current)
     }
+
+    @org.junit.Test fun cancellationBeforeGenerationStillMatchesOnlyTheCurrentUuid() {
+        val owner = SessionOwner()
+        val lease = owner.acquire(SessionOwner.Request("current", "translation", "en", "es"))!!
+        org.junit.Assert.assertTrue(owner.acceptsCancellation("current", null))
+        org.junit.Assert.assertTrue(owner.acceptsCancellation("current", lease.generation))
+        org.junit.Assert.assertFalse(owner.acceptsCancellation("another", null))
+        org.junit.Assert.assertFalse(owner.acceptsCancellation("current", lease.generation + 1))
+        owner.beginClose(); owner.released(lease, true)
+        org.junit.Assert.assertFalse(owner.acceptsCancellation("current", null))
+    }
 }

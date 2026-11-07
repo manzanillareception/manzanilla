@@ -7,8 +7,53 @@ permissions:
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
+  cartesia-agent:
+    concurrency:
+      group: cartesia-v1-agent-provision
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      agent_id: ${{ steps.config.outputs.agent_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Configure and verify the dedicated Cartesia V1 agent
+        id: config
+        env:
+          CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'websockets>=14,<16'
+          mkdir -p "$RUNNER_TEMP/candidate"
+          if ! python scripts/provision_cartesia_v1.py --provision --probe-audio > "$RUNNER_TEMP/cartesia-readiness.json"; then
+            cat "$RUNNER_TEMP/cartesia-readiness.json"
+            exit 1
+          fi
+          python - <<'PYTHON'
+          import json, os, re
+          from pathlib import Path
+          result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "cartesia-readiness.json").read_text())
+          agent = result["agent_id"]
+          assert re.fullmatch(r"agent_[A-Za-z0-9_-]{1,128}", agent)
+          assert result["probe"]["status"] == "session_ready"
+          assert result["probe"]["synthetic_voice_status"] == "audio_and_tool_verified"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as env:
+              env.write(f"agent_id={agent}\n")
+          print("Dedicated Cartesia agent verified; synthetic WebSocket session ready.")
+          PYTHON
+          cp "$RUNNER_TEMP/cartesia-readiness.json" "$RUNNER_TEMP/candidate/cartesia-readiness.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cartesia-v1-readiness
+          path: ${{ runner.temp }}/candidate/cartesia-readiness.json
+          if-no-files-found: error
   signed-apk:
-    needs: [verify]
+    needs: [verify, cartesia-agent]
+    env:
+      CARTESIA_AGENT_NIGHT: ${{ needs.cartesia-agent.outputs.agent_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -31,8 +76,13 @@ jobs:
           fi
           printf 'RELEASE_TAG=%s\n' "$tag" >> "$GITHUB_ENV"
           printf '%s/build-tools/34.0.0\n' "$ANDROID_HOME" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@v4
+        with:
+          name: cartesia-v1-readiness
+          path: ${{ runner.temp }}/candidate
       - name: Build with existing pilot signing key
         env:
+          CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
           ORANGE_KEYSTORE_BASE64: ${{ secrets.ORANGE_KEYSTORE_BASE64 }}
           ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
           ORANGE_KEY_ALIAS: ${{ secrets.ORANGE_KEY_ALIAS }}
@@ -45,7 +95,7 @@ jobs:
           export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-pilot.jks"
           printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
           trap 'rm -f "$ORANGE_KEYSTORE"' EXIT
-          bash gradlew :hotel:assembleRelease :hotel:assembleReleaseAndroidTest -PupgradeFixture --no-daemon
+          bash gradlew :hotel:assembleRelease :hotel:assembleReleaseAndroidTest -PupgradeFixture -PrequireBundledCartesia --no-daemon
           mkdir -p "$RUNNER_TEMP/candidate"
           cp hotel/build/outputs/apk/release/hotel-release.apk "$RUNNER_TEMP/candidate/Manzanilla-Reception.apk"
           mkdir -p "$RUNNER_TEMP/upgrade-fixture"

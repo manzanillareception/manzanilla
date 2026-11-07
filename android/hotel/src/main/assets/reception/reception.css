@@ -101,3 +101,15 @@ html[data-translation="live"] .content[data-page="active"] .session-scroll{width
     .wordmark>*+*{margin-left:8px}
   }
 }
+
+/* Both translation directions share one centered, unlabelled text flow. */
+.live-transcript{align-self:center;box-sizing:border-box;width:100%;max-width:720px;margin:0 auto;padding:14px 20px;border-radius:18px;background:var(--surface);border:1px solid var(--rule);overflow-wrap:anywhere;word-break:break-word}
+.live-transcript-text{margin:0;white-space:pre-wrap;text-align:center;font-size:22px;line-height:1.5;color:var(--ink)}
+.setup-options{flex-wrap:wrap}.setup-key{align-self:center}
+@media(max-height:550px){.live-transcript{padding:10px 16px}.live-transcript-text{font-size:20px;line-height:1.4}}
+
+.local-source{align-self:center;max-width:720px;text-align:center;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:break-word}.local-source a{display:inline-block;color:var(--ink);text-decoration:underline;padding:8px 4px;min-height:32px}
+
+.voice-ball.reception-mic{width:48px;height:48px;min-width:48px;margin:0 8px 0 0}.voice-ball.reception-mic svg{width:22px;height:22px}
+
+.translation-status{margin:0;text-align:center;color:var(--muted);font-size:13px;line-height:1.4}
