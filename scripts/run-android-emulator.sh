@@ -16,7 +16,7 @@ adb install -r android/hotel/build/outputs/apk/androidTest/debug/hotel-debug-and
 adb shell dumpsys webviewupdate > "$evidence/webview.txt"
 adb shell cmd package set-home-activity com.android.launcher3/.Launcher
 adb logcat -c
-trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
+trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell pm revoke dev.orange.hotel android.permission.RECORD_AUDIO > /dev/null 2>&1 || true; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
 run_fixture() {
   local fixture="$1"
   local label="${2:-$1}"
@@ -24,11 +24,16 @@ run_fixture() {
   adb shell pm clear dev.orange.hotel
   timeout 240s adb shell am instrument -w -r -e case "$fixture" \
     dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$label.txt"
+  if [[ "$fixture" == native-audio-burst ]]; then
+    # Revoke only after instrumentation finishes: revocation can terminate its target process.
+    adb shell pm revoke dev.orange.hotel android.permission.RECORD_AUDIO
+    grep -q 'NATIVE_AUDIO_BURST recording=true listening=true playback_head=true released=true provider_calls=0' "$evidence/$label.txt"
+  fi
   # adb itself returns zero even when an instrumentation assertion fails.
   grep -q "PASS case=$fixture " "$evidence/$label.txt"
   grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
 }
-for fixture in reception-bridge translation-unavailable permission-lifecycle retired-credentials update-delivery; do
+for fixture in reception-bridge translation-unavailable permission-lifecycle native-audio-burst retired-credentials update-delivery; do
   run_fixture "$fixture"
 done
 # Personal translation setup must work whether Android has a screen lock or not.

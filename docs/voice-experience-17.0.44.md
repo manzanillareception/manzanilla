@@ -57,7 +57,11 @@ translation key into night reception.
 
 The owner explicitly requested no Cartesia API testing for this repair. Release
 CI reuses the existing public agent ID and uses its key only in the APK build.
-All Cartesia fixes are checked with offline protocol/audio/session fixtures.
+All Cartesia fixes are checked with offline protocol/audio/session fixtures. A
+disposable Android10/12 native-audio fixture injects a synthetic three-second
+PCM greeting through a fake provider into actual Android capture/playout and
+requires playback-head progress plus confirmed resource cleanup. It performs
+no provider calls and asserts functionality rather than a latency target.
 The standalone provisioning script is a manual tool and is not run by CI.
 
 An optional manually dispatched OpenAI-only probe uses a temporary Actions secret

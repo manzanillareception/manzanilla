@@ -16,6 +16,7 @@ class VoiceLifecycleFixture : Instrumentation() {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
                 "permission-lifecycle" -> PermissionLifecycleFixture.verify(this)
+                "native-audio-burst" -> NativeAudioFixture.verify(this)
                 "retired-credentials" -> RetiredCredentialsFixture.verify(this)
                 // Retained runner alias: V1 translation is gated only until BYOK is saved.
                 "translation-unavailable", "translation-missing-key" -> ReceptionWebViewFixture.verifyTranslationMissingKey(this)
