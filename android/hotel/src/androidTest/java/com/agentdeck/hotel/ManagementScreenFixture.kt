@@ -35,9 +35,11 @@ object ManagementScreenFixture {
         var bitmap: Bitmap? = null
         repeat(40) {
             Thread.sleep(500)
-            bitmap = runCatching { test.uiAutomation.takeScreenshot() }.getOrNull()
-            if (bitmap != null && bitmap!!.width > 0 && bitmap!!.height > 0) return@repeat
-            bitmap = null
+            val raw = runCatching { test.uiAutomation.takeScreenshot() }.getOrNull()
+            // UiAutomation may hand back a hardware-config bitmap that cannot be compressed.
+            bitmap = raw?.takeIf { it.width > 0 && it.height > 0 }
+                ?.let { it.copy(Bitmap.Config.ARGB_8888, false) ?: it }
+            if (bitmap != null) return@repeat
         }
         check(bitmap != null) { "No drawable frame for the management screen" }
         val out = File(context.filesDir, "management-screen.png")
