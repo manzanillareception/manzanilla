@@ -19,7 +19,7 @@ object ManagementScreenFixture {
         val context = test.targetContext
         val intent = Intent(context, KeyEntryActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val activity = test.startActivitySync(intent)
+        context.startActivity(intent) // async: startActivitySync from the main thread can deadlock/throw
         val keyguard = context.getSystemService(KeyguardManager::class.java)
         if (keyguard?.isDeviceSecure == true && keyguard.isKeyguardLocked) {
             test.uiAutomation.executeShellCommand("input keyevent 82")?.close()
@@ -40,7 +40,7 @@ object ManagementScreenFixture {
             if (out.isFile && out.length() > 1_000) { ready = true; return@repeat }
         }
         check(ready) { "screencap produced no PNG at ${out.absolutePath}" }
-        activity?.finish()
+        // Activity left open intentionally: the runner tears the emulator down.
         test.sendStatus(0, Bundle().apply { putString("screenshot", out.absolutePath) })
     }
 }
