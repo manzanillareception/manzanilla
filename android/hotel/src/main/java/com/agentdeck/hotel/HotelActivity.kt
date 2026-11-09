@@ -54,6 +54,7 @@ class HotelActivity : Activity() {
                     if (reason == "revoked") AdmissionPolicy.REVOKED_TEXT else AdmissionPolicy.blockedText(reason))
             }).apply {
             modeProvider = { owner.current?.request?.mode ?: "idle" }
+            updateStateProvider = { updater.managementSnapshot() }
             microphoneProvider = {
                 if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) "granted" else "denied"
             }

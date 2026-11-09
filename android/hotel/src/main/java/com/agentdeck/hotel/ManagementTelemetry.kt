@@ -23,6 +23,20 @@ object ManagementTelemetry {
     const val POLICY_ACK = "policy.ack"
     const val DIAGNOSTIC_SNAPSHOT = "diagnostic.snapshot"
 
+    // REV 12: schemaVersion 2 admits exactly one additive kind. A v2 envelope may carry any
+    // v1 kind plus update.status; v1-only batches keep schemaVersion 1. update.status is NOT
+    // in the blocked-allowed set (a blocked device gets DEVICE_BLOCKED for it).
+    const val UPDATE_STATUS = "update.status"
+    const val SCHEMA_VERSION_2 = 2
+    val UPDATE_STATES = setOf("up_to_date", "update_available", "downloading", "downloaded",
+        "installing", "installed", "failed")
+
+    data class UpdateState(val feedId: String, val state: String, val discoveredVersion: String?,
+                           val publishedAt: String?, val progressPct: Int?, val error: String?) {
+        fun canonical() = listOf(feedId, state, discoveredVersion, publishedAt, progressPct, error)
+            .joinToString("|") { it?.toString() ?: "" }
+    }
+
     /** Kinds a service-blocked installation may still send per the frozen contract. */
     val BLOCKED_ALLOWED = setOf(POLICY_ACK, DIAGNOSTIC_SNAPSHOT)
 
@@ -85,8 +99,22 @@ object ManagementTelemetry {
 
     fun kindOf(event: JSONObject): String = event.optString("kind")
 
+    fun updateStatus(bootId: String, sequence: Int, build: String, atMs: Long,
+                     snapshot: UpdateState): JSONObject {
+        require(snapshot.state in UPDATE_STATES) { "Unknown update state: ${snapshot.state}" }
+        return base(bootId, sequence, build, atMs)
+            .put("kind", UPDATE_STATUS)
+            .put("feedId", snapshot.feedId.take(96))
+            .put("state", snapshot.state)
+            .put("currentBuild", build)
+            .put("discoveredVersion", snapshot.discoveredVersion?.take(64) ?: JSONObject.NULL)
+            .put("publishedAt", snapshot.publishedAt ?: JSONObject.NULL)
+            .put("progressPct", snapshot.progressPct?.coerceIn(0, 100) ?: JSONObject.NULL)
+            .put("error", snapshot.error?.take(500) ?: JSONObject.NULL)
+    }
+
     fun envelope(events: List<JSONObject>): JSONObject = JSONObject()
-        .put("schemaVersion", SCHEMA_VERSION)
+        .put("schemaVersion", if (events.any { kindOf(it) == UPDATE_STATUS }) SCHEMA_VERSION_2 else SCHEMA_VERSION)
         .put("events", JSONArray(events))
 
     fun serializedBytes(envelope: JSONObject): Int = envelope.toString().toByteArray(Charsets.UTF_8).size

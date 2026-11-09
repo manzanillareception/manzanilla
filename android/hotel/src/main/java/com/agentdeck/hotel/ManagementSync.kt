@@ -53,6 +53,8 @@ class ManagementSync(
     // Device-state suppliers, installed by the Activity. Defaults keep telemetry honest (unknown/null).
     var modeProvider: () -> String = { "idle" }
     var microphoneProvider: () -> String = { "unknown" }
+    /** rev12: current updater state for update.status; null means nothing reported yet. */
+    var updateStateProvider: () -> ManagementTelemetry.UpdateState? = { null }
     var batteryProvider: () -> Int? = {
         val intent: Intent? = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -286,6 +288,7 @@ class ManagementSync(
                 backoff.reset()
                 lastSyncNote = "ok"
                 applyPolicy(conn, result.value)
+                maybeQueueUpdateStatus()
                 flush(conn)
                 if (foreground && !disposed) scheduleHeartbeat(HEARTBEAT_MS)
             }
@@ -337,6 +340,21 @@ class ManagementSync(
             onMain { onPolicyBlocked() }
         }
     }
+
+    // Emit update.status on state change only (never more than once per heartbeat cycle);
+    // blocked devices cannot send it (the flush filter excludes the kind server-side too).
+    private fun maybeQueueUpdateStatus() {
+        val snapshot = updateStateProvider() ?: return
+        val canonical = snapshot.canonical()
+        if (canonical == lastReportedUpdate) return
+        queue.append(ManagementTelemetry.updateStatus(bootId, counter.getAndIncrement(),
+            BuildConfig.VERSION_NAME, System.currentTimeMillis(), snapshot))
+        lastReportedUpdate = canonical
+    }
+
+    private var lastReportedUpdate: String?
+        get() = prefs.getString("lastUpdateStatus", null)
+        set(value) = prefs.edit().putString("lastUpdateStatus", value).apply()
 
     private fun queueDiagnostic() {
         queue.append(ManagementTelemetry.diagnosticSnapshot(bootId, counter.getAndIncrement(),

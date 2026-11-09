@@ -50,6 +50,22 @@ This module implements the Android side of the frozen `/api/v1` device-managemen
 - Heartbeats are the only periodic emission; there is no periodic queue flush timer in
   background. Offline backlog uploads on the next heartbeat or admission.
 
+## update.status (contract rev12)
+
+- Emitted on updater state change only (deduped by canonical payload; at most one per
+  heartbeat cycle), never periodic. Kinds: up_to_date | update_available | downloading |
+  downloaded | installing | installed | failed.
+- Any envelope containing update.status is sent as schemaVersion 2 (v1-only batches stay
+  schemaVersion 1). Blocked devices do not send it (server returns DEVICE_BLOCKED; the
+  blocked-allowed set is unchanged: policy.ack + diagnostic.snapshot only).
+- Fields: feedId (release tag of the discovered update, else "unknown" until a discovery),
+  state, currentBuild (BuildConfig.VERSION_NAME), discoveredVersion, publishedAt (null until
+  the feed parser carries it), progressPct (0-99 while downloading, else null), error
+  (bounded local failure text, only when failed). NOTE for contract owner: confirm feedId
+  semantics (release tag vs stable feed identity) and publishedAt source before rollout.
+- The update feed defaults still point at the legacy org (see the audit below); update.status
+  reports the state of whatever feed the build actually checks.
+
 ## Update feed audit (agent task requirement)
 
 `UpdateFeed` defaults in `build.gradle.kts` still point at the legacy

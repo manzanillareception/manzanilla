@@ -35,6 +35,32 @@ class ManagementTelemetryTest {
         assertEquals(listOf("e2", "e3"), batch.map { it.getString("eventId") })
     }
 
+    @Test fun `update status uses schema version 2 in the envelope`() {
+        val snapshot = ManagementTelemetry.UpdateState("v1.2.3", "update_available", "17.0.46", null, null, null)
+        val event = ManagementTelemetry.updateStatus("b", 1, "17.0.45", 1_762_752_000_000L, snapshot)
+        assertEquals("update.status", event.getString("kind"))
+        assertEquals("update_available", event.getString("state"))
+        val envelope = ManagementTelemetry.envelope(listOf(event))
+        assertEquals(2, envelope.getInt("schemaVersion"))
+    }
+
+    @Test fun `v1 only batches keep schema version 1`() {
+        val envelope = ManagementTelemetry.envelope(listOf(event("session.started", "e1")))
+        assertEquals(1, envelope.getInt("schemaVersion"))
+    }
+
+    @Test fun `blocked devices cannot send update status`() {
+        assertFalse(ManagementTelemetry.BLOCKED_ALLOWED.contains("update.status"))
+    }
+
+    @Test fun `unknown update state rejected`() {
+        try {
+            ManagementTelemetry.updateStatus("b", 1, "17.0.45", 0L,
+                ManagementTelemetry.UpdateState("f", "bogus", null, null, null, null))
+            org.junit.Assert.fail("expected rejection")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test fun `event timestamps are ISO offset not epoch`() {
         val e = ManagementTelemetry.sessionStarted("b", 1, "17.0.45", 1_762_752_000_000L, "s", "a", "translation")
         assertTrue(e.getString("occurredAt").contains("T"))
