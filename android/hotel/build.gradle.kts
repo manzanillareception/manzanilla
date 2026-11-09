@@ -25,6 +25,13 @@ android {
         buildConfigField("String", "CARTESIA_API_KEY", javaString(""))
         buildConfigField("String", "CARTESIA_AGENT_ID", javaString(System.getenv("CARTESIA_AGENT_NIGHT")
             ?: project.findProperty("cartesiaAgentId") as String? ?: "agent_gKPCioSa99LcdABjCEKLX7"))
+        // Public-by-design Supabase client config for hotel email/password sign-in at enrollment.
+        // Empty in local/debug builds until CI plumbs the staging/production project values;
+        // the enrollment UI then offers the admin-issued setup code path instead.
+        buildConfigField("String", "SUPABASE_URL", javaString(System.getenv("SUPABASE_URL")
+            ?: project.findProperty("supabaseUrl") as String? ?: ""))
+        buildConfigField("String", "SUPABASE_ANON_KEY", javaString(System.getenv("SUPABASE_ANON_KEY")
+            ?: project.findProperty("supabaseAnonKey") as String? ?: ""))
         versionName = rootProject.file("VERSION").readText().trim()
     }
     androidResources { noCompress += "wav" }
