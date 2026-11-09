@@ -28,8 +28,7 @@ object ManagementScreenFixture {
             Thread.sleep(500)
             test.uiAutomation.executeShellCommand("input keyevent 66")?.close()
         }
-        test.sendStatus(0, Bundle().apply { putString("stream", "management-screen stage=launched
-") })
+        test.sendStatus(0, Bundle().apply { putString("stream", "management-screen stage=launched\n") })
         // Let the window draw.
         Thread.sleep(4_000)
         val out = File(context.getExternalFilesDir(null) ?: context.filesDir, "management-screen.png")
@@ -42,12 +41,10 @@ object ManagementScreenFixture {
             if (out.isFile && out.length() > 1_000) { ready = true; return@repeat }
         }
         if (!ready) {
-            test.sendStatus(0, Bundle().apply { putString("stream", "management-screen stage=capture-failed size=" + (if (out.isFile) out.length() else -1L) + "
-") })
+            test.sendStatus(0, Bundle().apply { putString("stream", "management-screen stage=capture-failed size=" + (if (out.isFile) out.length() else -1L) + "\n") })
         }
         check(ready) { "screencap produced no output" }
-        test.sendStatus(0, Bundle().apply { putString("stream", "management-screen stage=captured
-") })        // Activity left open intentionally: the runner tears the emulator down.
+        test.sendStatus(0, Bundle().apply { putString("stream", "management-screen stage=captured\n") })        // Activity left open intentionally: the runner tears the emulator down.
         test.sendStatus(0, Bundle().apply { putString("screenshot", out.absolutePath) })
     }
 }
