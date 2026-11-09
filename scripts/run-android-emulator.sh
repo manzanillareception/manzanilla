@@ -38,7 +38,11 @@ for fixture in reception-bridge translation-unavailable permission-lifecycle nat
 done
 
 # Staff management screen: capture real pixels and pull the PNG into the evidence artifact.
+# The enrollment section sits behind the device-credential gate, so set the known synthetic
+# fixture PIN first (same one the voice-setup cases use; cleared by the exit trap and below).
+adb shell locksettings set-pin 2468
 run_fixture management-screen
+adb shell locksettings clear --old 2468 > /dev/null 2>&1 || adb shell locksettings clear > /dev/null
 shot_path=$(grep -o 'screenshot=[^ ]*' "$evidence/management-screen.txt" | head -1 | cut -d= -f2- | tr -d '\r')
 test -n "$shot_path"
 adb pull "$shot_path" "$evidence/management-screen.png" > /dev/null
