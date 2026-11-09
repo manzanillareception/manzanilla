@@ -309,7 +309,9 @@ class ManagementSync(
         if (snapshot.policyRevision > ackRevision) {
             when (val ack = client.policyAck(conn.base, conn.credential, snapshot.policyRevision,
                 bootId, counter.getAndIncrement())) {
-                is ManagementClient.Result.Ok -> ackRevision = ack.value.revision
+                is ManagementClient.Result.Ok ->
+                    // rev11: a recorded stale ACK may report an older revision; never regress.
+                    ackRevision = maxOf(ackRevision, ack.value.revision, snapshot.policyRevision)
                 is ManagementClient.Result.Rejected ->
                     if (ack.code == "DEVICE_BLOCKED") {
                         // Blocked installations ACK through the telemetry channel instead.
