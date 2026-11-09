@@ -36,6 +36,12 @@ run_fixture() {
 for fixture in reception-bridge translation-unavailable permission-lifecycle native-audio-burst retired-credentials update-delivery; do
   run_fixture "$fixture"
 done
+
+# Staff management screen: capture real pixels and pull the PNG into the evidence artifact.
+run_fixture management-screen
+shot_path=$(grep -o 'screenshot=[^ ]*' "$evidence/management-screen.txt" | head -1 | cut -d= -f2- | tr -d '\r')
+test -n "$shot_path"
+adb pull "$shot_path" "$evidence/management-screen.png" > /dev/null
 # Personal translation setup must work whether Android has a screen lock or not.
 # Only the known synthetic PIN may be cleared on this disposable emulator.
 adb shell locksettings clear --old 2468 > /dev/null 2>&1 || adb shell locksettings clear > /dev/null
