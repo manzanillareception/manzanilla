@@ -48,6 +48,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
     private var lastFeedState: String? = null
     private var lastFeedId: String? = null
     private var lastDiscovered: String? = null
+    private var lastPublishedAt: String? = null
     private var lastFeedError: String? = null
     private var lastPct: Int? = null
     private var installWhenReady = false
@@ -178,8 +179,8 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
                     if (ownership.generation != refreshGeneration || ownership.active != null) return@post
                     if (request != null && eligible(request)) {
                         lastFeedState = "update_available"
-                        lastFeedId = request.tag
-                        lastDiscovered = request.versionName
+                        lastDiscovered = request.tag
+                        lastPublishedAt = request.publishedAt
                         lastFeedError = null
                         ownership.begin(request)?.let { persist(it); resume(it) }
                     } else {
@@ -216,16 +217,29 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         var primaryFailure: Exception? = null
         try {
             return UpdateFeed.parse(getJson(BuildConfig.FEED_URL, "update feed")) { getJson(it, "release manifest") }
+                ?.also { lastFeedId = feedIdOf(BuildConfig.FEED_URL); lastPublishedAt = it.publishedAt }
         } catch (e: Exception) {
             primaryFailure = e
             Log.w("UPD", "Primary update feed failed; trying the legacy release API", e)
         }
         try {
             return UpdateFeed.parse(getJson(BuildConfig.LEGACY_FEED_URL, "update feed")) { getJson(it, "release manifest") }
+                ?.also { lastFeedId = feedIdOf(BuildConfig.LEGACY_FEED_URL); lastPublishedAt = it.publishedAt }
         } catch (fallbackFailure: Exception) {
             Log.w("UPD", "Legacy release API failed as well", fallbackFailure)
             throw primaryFailure ?: fallbackFailure
         }
+    }
+
+    // rev12 feedId: the polled feed identity ("github:<owner>/<repo>"), never the version tag.
+    private fun feedIdOf(url: String): String {
+        val uri = Uri.parse(url)
+        val segments = uri.pathSegments ?: return "github:unknown"
+        val repo = if (segments.firstOrNull() == "repos" && segments.size >= 3)
+            "${segments[1]}/${segments[2]}"
+        else if (segments.size >= 2) "${segments[0]}/${segments[1]}"
+        else "unknown"
+        return "github:$repo"
     }
 
 
@@ -591,10 +605,10 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         }
         val state = phaseState ?: lastFeedState ?: return null
         return ManagementTelemetry.UpdateState(
-            feedId = attempt?.request?.tag ?: lastFeedId ?: "unknown",
+            feedId = lastFeedId ?: feedIdOf(BuildConfig.FEED_URL),
             state = state,
-            discoveredVersion = attempt?.request?.versionName ?: lastDiscovered,
-            publishedAt = null,
+            discoveredVersion = attempt?.request?.tag ?: lastDiscovered,
+            publishedAt = attempt?.request?.publishedAt ?: lastPublishedAt,
             progressPct = if (phase == "downloading") lastPct else null,
             error = if (state == "failed") lastFeedError else null)
     }

@@ -20,7 +20,9 @@ object UpdateFeed {
             ?: error("Release metadata asset is missing or ambiguous")
         val manifestUrl = manifest.getString("browser_download_url")
         https(manifestUrl)
-        val request = UpdateRequest.fromJson(fetch(manifestUrl))
+        val request = UpdateRequest.fromJson(fetch(manifestUrl)).let {
+            it.copy(publishedAt = document.optString("published_at").ifBlank { null })
+        }
         require(request.tag == tag) { "Release tag/metadata mismatch" }
         val apk = entries.singleOrNull {
             it.optString("browser_download_url") == request.url && it.optString("name").endsWith(".apk")

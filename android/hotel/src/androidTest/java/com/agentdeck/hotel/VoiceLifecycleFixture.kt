@@ -21,6 +21,7 @@ class VoiceLifecycleFixture : Instrumentation() {
                 // Retained runner alias: V1 translation is gated only until BYOK is saved.
                 "translation-unavailable", "translation-missing-key" -> ReceptionWebViewFixture.verifyTranslationMissingKey(this)
                 "update-delivery" -> UpdaterFixture.verify(this)
+                "management-screen" -> ManagementScreenFixture.verify(this)
                 else -> error("Unknown fixture case: $case")
             }
             result.putString("stream", "PASS case=$case \n")
