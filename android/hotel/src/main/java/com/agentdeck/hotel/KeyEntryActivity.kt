@@ -35,6 +35,7 @@ class KeyEntryActivity : Activity() {
     private val publicSetup get() = voiceOnly || nightOnly || v1Setup
     private val setupTitle get() = when { voiceOnly -> "OpenAI translation key"; nightOnly -> "Night receptionist setup"; v1Setup -> "Reception setup"; else -> "Staff setup" }
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
+    private val management by lazy { ManagementSync(this, onMain = { action -> runOnUiThread { action() } }) }
     private var authenticated = false
     private var authenticationInFlight = false
     private var authenticationAccepted = false
@@ -200,6 +201,7 @@ class KeyEntryActivity : Activity() {
         fields.add(connectionUrl)
         column.addView(connectionUrl)
         addProvider(column, "Hotel connection", "hotel_connection", connectionUrl)
+        addManagementSection(column)
         column.addView(button("Voice diagnostics (test build)") {
             startActivity(Intent(this@KeyEntryActivity, DiagnosticsActivity::class.java))
         })
@@ -210,6 +212,80 @@ class KeyEntryActivity : Activity() {
             addView(column)
         })
     }
+
+    // Device management enrollment. Primary path: hotel staff email/password sign-in
+    // (release builds carry the public Supabase client config; without it the setup-code
+    // path below remains). Setup codes are the admin-assisted fallback from the web admin.
+    private fun addManagementSection(column: LinearLayout) {
+        column.addView(label("Device management", 20f))
+        val status = label("")
+        status.text = management.statusSummary()
+        column.addView(status)
+        if (management.enrolled()) {
+            column.addView(button("Remove device management") {
+                AlertDialog.Builder(this).setTitle("Remove device management")
+                    .setMessage("This tablet will no longer report to or be controlled by hotel management. Voice keeps working; the tablet becomes unmanaged.")
+                    .setPositiveButton("Remove") { _, _ ->
+                        management.clearEnrollment()
+                        lock(); showConfiguration()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            })
+            return
+        }
+        if (BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()) {
+            val email = EditText(this).apply {
+                hint = "Staff email"
+                inputType = InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                setSingleLine(); isSaveEnabled = false; setSaveFromParentEnabled(false)
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                setTextColor(ink); setHintTextColor(hintInk)
+                backgroundTintList = ColorStateList.valueOf(accent)
+            }
+            val password = EditText(this).apply {
+                hint = "Staff password"
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                setSingleLine(); isSaveEnabled = false; setSaveFromParentEnabled(false)
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                setTextColor(ink); setHintTextColor(hintInk)
+                backgroundTintList = ColorStateList.valueOf(accent)
+            }
+            fields.add(email); fields.add(password)
+            column.addView(email); column.addView(password)
+            column.addView(button("Sign in and enroll") {
+                val e = email.text.toString(); val p = password.text.toString()
+                if (!ManagementCredentials.validEmail(e.trim())) { toast("Enter the hotel staff email."); return@button }
+                if (p.isBlank()) { toast("Enter the staff password."); return@button }
+                toast("Signing in…")
+                management.signInAndEnroll(ManagementSync.DEFAULT_BASE, e, p, deviceLabel()) { ok, msg ->
+                    toast(msg); if (ok) { lock(); showConfiguration() }
+                }
+            })
+        }
+        val code = EditText(this).apply {
+            hint = "Setup code from web admin"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(); isSaveEnabled = false; setSaveFromParentEnabled(false)
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            setTextColor(ink); setHintTextColor(hintInk)
+            backgroundTintList = ColorStateList.valueOf(accent)
+        }
+        fields.add(code)
+        column.addView(code)
+        column.addView(button("Enroll with setup code") {
+            val c = code.text.toString()
+            if (ManagementCredentials.validSetupToken(c) == null) { toast("Enter the setup code exactly as shown in the web admin."); return@button }
+            toast("Enrolling…")
+            management.enrollWithToken(ManagementSync.DEFAULT_BASE, c, deviceLabel()) { ok, msg ->
+                toast(msg); if (ok) { lock(); showConfiguration() }
+            }
+        })
+    }
+
+    private fun deviceLabel() = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} tablet"
+
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     private fun showNightProfile(column: LinearLayout) {
         val store = NightProfileStore(this)

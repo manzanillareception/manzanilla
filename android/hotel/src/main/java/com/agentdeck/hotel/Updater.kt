@@ -44,6 +44,13 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
     private val action = "dev.orange.hotel.UPDATE_RESULT"
     private var phase = "idle"
     private var restored = false
+    // rev12 management reporting state (feed outcome + download progress)
+    private var lastFeedState: String? = null
+    private var lastFeedId: String? = null
+    private var lastDiscovered: String? = null
+    private var lastPublishedAt: String? = null
+    private var lastFeedError: String? = null
+    private var lastPct: Int? = null
     private var installWhenReady = false
     private var lastStatus: String? = null
     private var receiver: BroadcastReceiver? = null
@@ -171,14 +178,24 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
                     checking.set(false)
                     if (ownership.generation != refreshGeneration || ownership.active != null) return@post
                     if (request != null && eligible(request)) {
+                        lastFeedState = "update_available"
+                        lastDiscovered = request.tag
+                        lastPublishedAt = request.publishedAt
+                        lastFeedError = null
                         ownership.begin(request)?.let { persist(it); resume(it) }
-                    } else onStatus("current:")
+                    } else {
+                        lastFeedState = "up_to_date"
+                        lastFeedError = null
+                        onStatus("current:")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w("UPD", "Release metadata unavailable", e)
                 ui.post {
                     checking.set(false)
                     if (ownership.generation == refreshGeneration && ownership.active == null) {
+                        lastFeedState = "failed"
+                        lastFeedError = UpdateFailure.describe(e).take(200)
                         onStatus("failed:" + UpdateFailure.describe(e))
                     }
                 }
@@ -200,16 +217,29 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         var primaryFailure: Exception? = null
         try {
             return UpdateFeed.parse(getJson(BuildConfig.FEED_URL, "update feed")) { getJson(it, "release manifest") }
+                ?.also { lastFeedId = feedIdOf(BuildConfig.FEED_URL); lastPublishedAt = it.publishedAt }
         } catch (e: Exception) {
             primaryFailure = e
             Log.w("UPD", "Primary update feed failed; trying the legacy release API", e)
         }
         try {
             return UpdateFeed.parse(getJson(BuildConfig.LEGACY_FEED_URL, "update feed")) { getJson(it, "release manifest") }
+                ?.also { lastFeedId = feedIdOf(BuildConfig.LEGACY_FEED_URL); lastPublishedAt = it.publishedAt }
         } catch (fallbackFailure: Exception) {
             Log.w("UPD", "Legacy release API failed as well", fallbackFailure)
             throw primaryFailure ?: fallbackFailure
         }
+    }
+
+    // rev12 feedId: the polled feed identity ("github:<owner>/<repo>"), never the version tag.
+    private fun feedIdOf(url: String): String {
+        val uri = Uri.parse(url)
+        val segments = uri.pathSegments ?: return "github:unknown"
+        val repo = if (segments.firstOrNull() == "repos" && segments.size >= 3)
+            "${segments[1]}/${segments[2]}"
+        else if (segments.size >= 2) "${segments[0]}/${segments[1]}"
+        else "unknown"
+        return "github:$repo"
     }
 
 
@@ -563,9 +593,30 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         if (id >= 0) try { app.packageManager.packageInstaller.abandonSession(id) } catch (_: Exception) {}
     }
 
+    /** rev12 snapshot for management update.status reporting; null before any check outcome. */
+    fun managementSnapshot(): ManagementTelemetry.UpdateState? {
+        val attempt = ownership.active
+        val phaseState = when (phase) {
+            "downloading", "validating" -> "downloading"
+            "ready" -> "downloaded"
+            "permission", "confirming", "installing" -> "installing"
+            "installed" -> "installed"
+            else -> null
+        }
+        val state = phaseState ?: lastFeedState ?: return null
+        return ManagementTelemetry.UpdateState(
+            feedId = lastFeedId ?: feedIdOf(BuildConfig.FEED_URL),
+            state = state,
+            discoveredVersion = attempt?.request?.tag ?: lastDiscovered,
+            publishedAt = attempt?.request?.publishedAt ?: lastPublishedAt,
+            progressPct = if (phase == "downloading") lastPct else null,
+            error = if (state == "failed") lastFeedError else null)
+    }
+
     private fun note(pct: Int = 0, got: Long = 0, total: Long = 0, done: Boolean = false) {
         val manager = app.getSystemService(NotificationManager::class.java)
         if (done) { manager.cancel(7); return }
+        lastPct = pct.coerceIn(0, 99)
         if (Build.VERSION.SDK_INT >= 33 && app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         if (manager.getNotificationChannel("upd") == null) manager.createNotificationChannel(NotificationChannel("upd", "Updates", NotificationManager.IMPORTANCE_LOW))
         manager.notify(7, Notification.Builder(app, "upd").setSmallIcon(android.R.drawable.stat_sys_download)

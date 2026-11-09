@@ -11,7 +11,8 @@ data class UpdateRequest(
     val packageName: String,
     val versionName: String,
     val versionCode: Long,
-    val sha256: String?
+    val sha256: String?,
+    val publishedAt: String? = null
 ) {
     init {
         require(ReleaseVersion.valid(tag) && tag == "v$versionName")
@@ -24,6 +25,7 @@ data class UpdateRequest(
     fun json(): JSONObject = JSONObject().put("schema", 1).put("tag", tag).put("url", url)
         .put("package_name", packageName).put("version_name", versionName).put("version_code", versionCode)
         .apply { sha256?.let { put("sha256", it) } }
+        .apply { publishedAt?.let { put("published_at", it) } }
 
     // Includes all expectations, not merely the version label, to prevent cache collisions.
     val key: String = hash(listOf(tag, url, packageName, versionName, versionCode.toString(), sha256.orEmpty())
@@ -43,7 +45,8 @@ data class UpdateRequest(
             require(json.getInt("schema") == 1)
             return UpdateRequest(json.getString("tag"), json.getString("url"), json.getString("package_name"),
                 json.getString("version_name"), json.getLong("version_code"),
-                json.optString("sha256").takeIf { it.isNotEmpty() }?.lowercase())
+                json.optString("sha256").takeIf { it.isNotEmpty() }?.lowercase(),
+                json.optString("published_at").ifBlank { null })
         }
         fun hash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it.toInt() and 255) }

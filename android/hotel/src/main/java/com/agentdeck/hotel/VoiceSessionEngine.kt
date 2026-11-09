@@ -89,8 +89,13 @@ internal class VoiceSessionEngine(
         JSONObject().put("phase", value).put("text", text))
     private fun current(epoch: NativeVoiceAttempt) = !closed && attempt === epoch && epoch.active()
     private fun dispatch(epoch: NativeVoiceAttempt, action: () -> Unit) { ui.post { if (current(epoch)) action() } }
-    private fun terminalError(epoch: NativeVoiceAttempt, message: String) {
-        if (current(epoch) && epoch.finish(error = true)) phase("error", message)
+    private fun terminalError(epoch: NativeVoiceAttempt, message: String, code: String? = null) {
+        if (current(epoch) && epoch.finish(error = true)) {
+            val event = JSONObject().put("phase", "error").put("text", message)
+            // Machine-readable contract code for fleet telemetry; the UI ignores unknown fields.
+            if (code != null) event.put("error_code", code)
+            emit("reception_event", event)
+        }
     }
     private fun announceListening(epoch: NativeVoiceAttempt) {
         if (current(epoch) && epoch.ready && audioReady && !listening) {
@@ -144,7 +149,8 @@ internal class VoiceSessionEngine(
                 }
                 override fun onDiagnostics(metrics: JSONObject) = dispatch(epoch) { emit("voice_diagnostics", metrics) }
                 override fun onError(message: String, retryable: Boolean) = dispatch(epoch) {
-                    if (retryable && reconnects < 3) reconnect(epoch) else terminalError(epoch, message)
+                    val code = ManagementErrorCodes.fromTransportMessage(message)
+                    if (retryable && reconnects < 3) reconnect(epoch, code) else terminalError(epoch, message, code)
                 }
                 override fun onClosed() = dispatch(epoch) {
                     if (!epoch.failed && epoch.finish()) phase("ended", "Conversation ended.")
@@ -183,7 +189,7 @@ internal class VoiceSessionEngine(
                 ui.post {
                     if (!current(epoch)) return@post
                     if (!prepared) {
-                        terminalError(epoch, "Microphone could not start. Check microphone access and retry.")
+                        terminalError(epoch, "Microphone could not start. Check microphone access and retry.", ManagementErrorCodes.AUDIO_STARTUP)
                         return@post
                     }
                     audioReady = true
@@ -192,12 +198,12 @@ internal class VoiceSessionEngine(
                 }
             }
             ui.postDelayed({ if (current(epoch) && !audioReady)
-                terminalError(epoch, "Android audio took too long to start. Check the audio route and retry.") }, 10_000)
+                terminalError(epoch, "Android audio took too long to start. Check the audio route and retry.", ManagementErrorCodes.AUDIO_STARTUP) }, 10_000)
             if (current(epoch)) connection.connect()
-        } catch (_: Exception) { terminalError(epoch, "Voice connection could not start. Check setup and retry.") }
+        } catch (_: Exception) { terminalError(epoch, "Voice connection could not start. Check setup and retry.", ManagementErrorCodes.PROVIDER) }
     }
 
-    private fun reconnect(epoch: NativeVoiceAttempt) {
+    private fun reconnect(epoch: NativeVoiceAttempt, code: String? = null) {
         if (!current(epoch)) return
         epoch.finish(error = true)
         val reconnectEpoch = NativeVoiceAttempt().also { attempt = it }
@@ -206,7 +212,9 @@ internal class VoiceSessionEngine(
         val oldAudio = audio.also { audio = null }
         retiringAudio = oldAudio
         audioReady = false
-        phase("reconnecting", "Connection lost. Reconnecting…")
+        emit("reception_event", JSONObject().put("phase", "reconnecting")
+            .put("text", "Connection lost. Reconnecting…")
+            .apply { if (code != null) put("error_code", code) })
         emit("audio_state", JSONObject().put("state", "stopping"))
         worker.execute {
             runCatching { oldTransport?.close() }

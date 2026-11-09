@@ -43,6 +43,23 @@ class HotelActivity : Activity() {
     }
     private val hotelConnection by lazy { HotelConnection(this) }
     private var gateway: HotelGateway? = null
+    private val management by lazy {
+        ManagementSync(this,
+            onMain = { action -> runOnUiThread { action() } },
+            onPolicyBlocked = {
+                if (owner.current != null) stopSession("error", AdmissionPolicy.STOP_ON_BLOCK_TEXT)
+            },
+            onAdmissionDenied = { reason ->
+                if (owner.current != null) stopSession("error",
+                    if (reason == "revoked") AdmissionPolicy.REVOKED_TEXT else AdmissionPolicy.blockedText(reason))
+            }).apply {
+            modeProvider = { owner.current?.request?.mode ?: "idle" }
+            updateStateProvider = { updater.managementSnapshot() }
+            microphoneProvider = {
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) "granted" else "denied"
+            }
+        }
+    }
     private val openAiStore by lazy { SecretStore(this, "openai") }
     private val profileStore by lazy { NightProfileStore(this) }
     private val location by lazy { DeviceLocation(this, profileStore) }
@@ -129,6 +146,31 @@ class HotelActivity : Activity() {
         audioState = "off"
         phase(lease, "connecting")
         audio(lease, "off")
+        if (management.enrolled()) {
+            // Managed start: admission is fail-closed. No cached-approval fallback (v1 policy).
+            val attemptId = management.newAttemptId()
+            management.admit(request.id, attemptId, request.mode) { decision, reason ->
+                if (!current(lease)) return@admit
+                when (decision) {
+                    AdmissionPolicy.Decision.ADMIT, AdmissionPolicy.Decision.UNMANAGED -> {
+                        management.beginSession(request.id, request.mode, attemptId)
+                        beginMicrophone(lease)
+                    }
+                    AdmissionPolicy.Decision.DENY -> stopSession("error",
+                        if (reason == "revoked") AdmissionPolicy.REVOKED_TEXT else AdmissionPolicy.blockedText(reason))
+                    AdmissionPolicy.Decision.UNAVAILABLE -> {
+                        management.policySyncFailed(request.id, attemptId, request.mode)
+                        stopSession("error", AdmissionPolicy.UNAVAILABLE_TEXT)
+                    }
+                }
+            }
+            return
+        }
+        // Unmanaged (never enrolled): legacy behavior, no fleet telemetry.
+        beginMicrophone(lease)
+    }
+
+    private fun beginMicrophone(lease: SessionOwner.Lease) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingMicrophone = lease
             permissionDialog = true
@@ -149,6 +191,7 @@ class HotelActivity : Activity() {
             else CartesiaNightTransport(key, BuildConfig.CARTESIA_AGENT_ID, context, listener)
         }, nightTools, push = eventSink@ { event ->
             if (current(lease)) {
+                management.voiceEvent(event)
                 val type = event.optString("type")
                 if (type == "voice_diagnostics") {
                     VoiceDiagnostics.recordMetrics(lease.generation, event)
@@ -180,6 +223,7 @@ class HotelActivity : Activity() {
 
     private fun stopSession(reason: String = "stopped", text: String = "", done: (() -> Unit)? = null) {
         if (done != null) afterRelease.add(done)
+        management.sessionEnded()
         val lease = owner.beginClose()
         if (lease == null) { if (owner.current == null) finishReleaseActions(); return }
         pendingMicrophone = null
@@ -381,6 +425,7 @@ class HotelActivity : Activity() {
         }
         pendingMicrophone?.takeIf { current(it) && !permissionDialog &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED }?.let(::connect)
+        management.onForeground()
         updater.onForeground()
         updater.check()
         ui.removeCallbacks(updatePoll)
@@ -395,6 +440,7 @@ class HotelActivity : Activity() {
     }
     override fun onPause() {
         foreground = false
+        management.onBackground()
         ui.removeCallbacks(updatePoll)
         if (!permissionDialog) {
             stopSession()
@@ -418,7 +464,10 @@ class HotelActivity : Activity() {
             val lease = pendingMicrophone ?: return
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 if (foreground) connect(lease)
-            } else stopSession("error", "Microphone access is required for voice. You can enable it in Android settings.")
+            } else {
+                management.permissionDenied()
+                stopSession("error", "Microphone access is required for voice. You can enable it in Android settings.")
+            }
         } else if (requestCode == 6 && foreground) showLocation()
     }
 
@@ -435,6 +484,7 @@ class HotelActivity : Activity() {
         ui.removeCallbacks(updatePoll)
         stopSession(done = {
             gateway?.dispose()
+            management.dispose()
         })
         nightTools.close()
         location.close()
